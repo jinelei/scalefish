@@ -26,3 +26,6 @@ databaseChangeLog:
   - include:
       file: changeset/013-create-api-tokens-table.sql
       relativeToChangelogFile: true
+  - include:
+      file: changeset/014-init-default-token.sql
+      relativeToChangelogFile: true
