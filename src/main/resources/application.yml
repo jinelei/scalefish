@@ -1,20 +1,8 @@
 spring:
   application:
     name: scalefish
-
-  datasource:
-    url: jdbc:h2:mem:scalefish
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
-
-  jpa:
-    hibernate:
-      ddl-auto: none
-    show-sql: true
-
-  liquibase:
-    change-log: classpath:db/changelog/db.changelog-master.yaml
+  profiles:
+    active: dev
 
 springdoc:
   api-docs:
@@ -28,7 +16,7 @@ app:
     username: admin
     # password: optional, auto-generated if not set
     name: Administrator
-    email: admin@example.com
+    email: jinelei@163.com
 
 jwt:
   access-secret: 9fE2b8F3aA1cD4eG5hJ6kL7mN0pQ2rS4tU6vW8xY0zB3cE5fH7iJ9kL1mN3oP
