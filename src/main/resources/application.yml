@@ -23,7 +23,12 @@ springdoc:
     path: /swagger-ui.html
 
 app:
-  allow-registration: true
+  allow-registration: false
+  admin:
+    username: admin
+    # password: optional, auto-generated if not set
+    name: Administrator
+    email: admin@example.com
 
 jwt:
   access-secret: 9fE2b8F3aA1cD4eG5hJ6kL7mN0pQ2rS4tU6vW8xY0zB3cE5fH7iJ9kL1mN3oP

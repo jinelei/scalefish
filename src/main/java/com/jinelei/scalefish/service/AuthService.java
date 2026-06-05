@@ -41,7 +41,7 @@ public class AuthService {
     }
 
     public boolean isRegistrationAllowed() {
-        return appProperties.isAllowRegistration() || userRepository.count() == 0;
+        return appProperties.isAllowRegistration();
     }
 
     @Transactional
