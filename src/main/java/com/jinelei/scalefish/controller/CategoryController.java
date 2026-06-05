@@ -38,6 +38,12 @@ public class CategoryController {
         return GenericResult.success(categoryService.getTree());
     }
 
+    @Operation(summary = "获取分类书签统计", description = "返回每个分类及其子分类的书签数量")
+    @GetMapping("/stats")
+    public GenericResult<List<com.jinelei.scalefish.dto.CategoryStatsResponse>> getStats() {
+        return GenericResult.success(categoryService.getStats());
+    }
+
     @Operation(summary = "创建分类")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

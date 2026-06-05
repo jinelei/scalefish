@@ -3,9 +3,6 @@ databaseChangeLog:
       file: changeset/001-create-users-table.sql
       relativeToChangelogFile: true
   - include:
-      file: changeset/002-insert-sample-data.sql
-      relativeToChangelogFile: true
-  - include:
       file: changeset/003-create-categories-table.sql
       relativeToChangelogFile: true
   - include:
@@ -18,11 +15,11 @@ databaseChangeLog:
       file: changeset/006-create-bookmark-tags-table.sql
       relativeToChangelogFile: true
   - include:
-      file: changeset/007-insert-sample-categories.sql
+      file: changeset/010-import-current-data.sql
       relativeToChangelogFile: true
   - include:
-      file: changeset/008-insert-sample-tags.sql
+      file: changeset/011-add-auth-columns.sql
       relativeToChangelogFile: true
   - include:
-      file: changeset/009-insert-sample-bookmarks.sql
+      file: changeset/012-add-role-column.sql
       relativeToChangelogFile: true

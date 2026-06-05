@@ -20,4 +20,8 @@ public record GenericResult<T>(
     public static <T> GenericResult<T> noContent() {
         return new GenericResult<>(204, "no content", null);
     }
+
+    public static <T> GenericResult<T> error(int code, String message) {
+        return new GenericResult<>(code, message, null);
+    }
 }

@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
 
 @Tag(name = "书签管理", description = "书签的增删改查、搜索、置顶、点击计数")
 @RestController
@@ -37,12 +38,12 @@ public class BookmarkController {
     @GetMapping
     public GenericResult<PageResponse<BookmarkResponse>> search(
             @Parameter(description = "搜索关键字") @RequestParam(required = false) String keyword,
-            @Parameter(description = "分类 ID") @RequestParam(required = false) Long categoryId,
-            @Parameter(description = "标签 ID") @RequestParam(required = false) Long tagId,
+            @Parameter(description = "分类 ID 列表（可多选）") @RequestParam(required = false) List<Long> categoryIds,
+            @Parameter(description = "标签 ID 列表（可多选）") @RequestParam(required = false) List<Long> tagIds,
             @Parameter(description = "是否置顶") @RequestParam(required = false) Boolean pinned,
             @Parameter(description = "页码（从 0 开始）", example = "0") @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int size) {
-        return GenericResult.success(bookmarkService.search(keyword, categoryId, tagId, pinned, page, size));
+        return GenericResult.success(bookmarkService.search(keyword, categoryIds, tagIds, pinned, page, size));
     }
 
     @Operation(summary = "获取书签详情")
