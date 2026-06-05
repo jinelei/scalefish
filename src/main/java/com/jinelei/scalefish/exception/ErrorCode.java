@@ -15,6 +15,7 @@ public enum ErrorCode {
     METHOD_NOT_ALLOWED(40004, "method not allowed", HttpStatus.METHOD_NOT_ALLOWED),
 
     NOT_FOUND(40400, "resource not found", HttpStatus.NOT_FOUND),
+    FORBIDDEN(40300, "forbidden", HttpStatus.FORBIDDEN),
 
     CONFLICT(40900, "resource conflict", HttpStatus.CONFLICT),
     DUPLICATE_RESOURCE(40901, "resource already exists", HttpStatus.CONFLICT),

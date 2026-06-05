@@ -1,12 +1,15 @@
 package com.jinelei.scalefish.service;
 
+import com.jinelei.scalefish.config.AppProperties;
 import com.jinelei.scalefish.dto.AuthResponse;
 import com.jinelei.scalefish.dto.LoginRequest;
 import com.jinelei.scalefish.dto.RefreshRequest;
 import com.jinelei.scalefish.dto.RegisterRequest;
 import com.jinelei.scalefish.entity.RefreshToken;
 import com.jinelei.scalefish.entity.User;
+import com.jinelei.scalefish.exception.BusinessException;
 import com.jinelei.scalefish.exception.DuplicateResourceException;
+import com.jinelei.scalefish.exception.ErrorCode;
 import com.jinelei.scalefish.exception.ResourceNotFoundException;
 import com.jinelei.scalefish.repository.RefreshTokenRepository;
 import com.jinelei.scalefish.repository.UserRepository;
@@ -25,13 +28,20 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final PasswordEncoder passwordEncoder;
+    private final AppProperties appProperties;
 
     public AuthService(UserRepository userRepository, RefreshTokenRepository refreshTokenRepository,
-                       JwtTokenProvider jwtTokenProvider, PasswordEncoder passwordEncoder) {
+                       JwtTokenProvider jwtTokenProvider, PasswordEncoder passwordEncoder,
+                       AppProperties appProperties) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtTokenProvider = jwtTokenProvider;
         this.passwordEncoder = passwordEncoder;
+        this.appProperties = appProperties;
+    }
+
+    public boolean isRegistrationAllowed() {
+        return appProperties.isAllowRegistration() || userRepository.count() == 0;
     }
 
     @Transactional
@@ -48,6 +58,10 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
+        if (!isRegistrationAllowed()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "管理员已关闭注册");
+        }
+
         if (userRepository.existsByUsername(req.username())) {
             throw new DuplicateResourceException("User", req.username());
         }

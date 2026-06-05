@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @Tag(name = "认证管理")
 @RestController
 @RequestMapping("/api/auth")
@@ -51,6 +53,12 @@ public class AuthController {
     public GenericResult<Void> logout(@AuthenticationPrincipal User user) {
         if (user != null) authService.logout(user.getId());
         return GenericResult.success(null);
+    }
+
+    @Operation(summary = "查询注册状态")
+    @GetMapping("/registration-status")
+    public GenericResult<Map<String, Object>> registrationStatus() {
+        return GenericResult.success(Map.of("allowRegistration", authService.isRegistrationAllowed()));
     }
 
     @Operation(summary = "获取当前用户信息")
