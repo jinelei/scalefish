@@ -2,6 +2,7 @@ package com.jinelei.scalefish.security;
 
 import com.jinelei.scalefish.entity.User;
 import com.jinelei.scalefish.repository.UserRepository;
+import com.jinelei.scalefish.service.ApiTokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,10 +23,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final UserRepository userRepository;
+    private final ApiTokenService apiTokenService;
 
-    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, UserRepository userRepository) {
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
+                                    UserRepository userRepository,
+                                    ApiTokenService apiTokenService) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.userRepository = userRepository;
+        this.apiTokenService = apiTokenService;
     }
 
     @Override
@@ -34,15 +39,31 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header != null && header.startsWith(BEARER_PREFIX)) {
             String token = header.substring(BEARER_PREFIX.length());
-            if (jwtTokenProvider.validateAccessToken(token)) {
-                Long userId = jwtTokenProvider.getUserIdFromAccessToken(token);
-                User user = userRepository.findById(userId).orElse(null);
-                if (user != null) {
-                    var auth = new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                }
+
+            User user = tryJwt(token);
+            if (user == null) {
+                user = tryApiToken(token);
+            }
+
+            if (user != null) {
+                var auth = new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
+                SecurityContextHolder.getContext().setAuthentication(auth);
             }
         }
         chain.doFilter(request, response);
+    }
+
+    private User tryJwt(String token) {
+        if (jwtTokenProvider.validateAccessToken(token)) {
+            Long userId = jwtTokenProvider.getUserIdFromAccessToken(token);
+            return userRepository.findById(userId).orElse(null);
+        }
+        return null;
+    }
+
+    private User tryApiToken(String token) {
+        return apiTokenService.authenticate(token)
+            .flatMap(t -> userRepository.findById(t.getUserId()))
+            .orElse(null);
     }
 }
