@@ -1,10 +1,12 @@
 package com.jinelei.scalefish.controller;
 
 import com.jinelei.scalefish.dto.AuthResponse;
+import com.jinelei.scalefish.dto.ChangePasswordRequest;
 import com.jinelei.scalefish.dto.GenericResult;
 import com.jinelei.scalefish.dto.LoginRequest;
 import com.jinelei.scalefish.dto.RefreshRequest;
 import com.jinelei.scalefish.dto.RegisterRequest;
+import com.jinelei.scalefish.dto.UpdateProfileRequest;
 import com.jinelei.scalefish.entity.User;
 import com.jinelei.scalefish.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -65,5 +67,20 @@ public class AuthController {
     @GetMapping("/me")
     public GenericResult<AuthResponse.UserInfo> me(@AuthenticationPrincipal User user) {
         return GenericResult.success(authService.me(user));
+    }
+
+    @Operation(summary = "修改密码")
+    @PostMapping("/change-password")
+    public GenericResult<Void> changePassword(@AuthenticationPrincipal User user,
+                                               @Valid @RequestBody ChangePasswordRequest req) {
+        authService.changePassword(user.getId(), req.oldPassword(), req.newPassword());
+        return GenericResult.success(null);
+    }
+
+    @Operation(summary = "更新个人信息")
+    @PostMapping("/update-profile")
+    public GenericResult<AuthResponse.UserInfo> updateProfile(@AuthenticationPrincipal User user,
+                                                               @RequestBody UpdateProfileRequest req) {
+        return GenericResult.success(authService.updateProfile(user.getId(), req.name(), req.email()));
     }
 }

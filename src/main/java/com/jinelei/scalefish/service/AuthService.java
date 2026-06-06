@@ -111,6 +111,31 @@ public class AuthService {
         return new AuthResponse.UserInfo(user.getId(), user.getUsername(), user.getName(), user.getEmail());
     }
 
+    @Transactional
+    public AuthResponse.UserInfo updateProfile(Long userId, String name, String email) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        if (name != null) user.setName(name);
+        if (email != null) user.setEmail(email);
+        userRepository.save(user);
+        return new AuthResponse.UserInfo(user.getId(), user.getUsername(), user.getName(), user.getEmail());
+    }
+
+    @Transactional
+    public void changePassword(Long userId, String oldPassword, String newPassword) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
+            throw new BadCredentialsException("当前密码错误");
+        }
+
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        refreshTokenRepository.deleteByUserId(userId);
+    }
+
     private AuthResponse createAuthResponse(User user) {
         String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), user.getUsername());
         String refreshTokenStr = jwtTokenProvider.generateRefreshToken(user.getId());
