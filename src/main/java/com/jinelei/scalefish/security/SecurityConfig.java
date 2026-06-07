@@ -2,6 +2,7 @@ package com.jinelei.scalefish.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -25,9 +26,27 @@ public class SecurityConfig {
         this.jwtFilter = jwtFilter;
     }
 
+    @Order(1)
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain webdavFilterChain(HttpSecurity http) throws Exception {
         http
+            .securityMatcher("/webdav/**")
+            .cors(cors -> cors.configurationSource(corsSource()))
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .anyRequest().authenticated()
+            )
+            .httpBasic(httpBasic -> httpBasic.realmName("Scalefish WebDAV"))
+            .headers(headers -> headers.frameOptions(fo -> fo.disable()));
+        return http.build();
+    }
+
+    @Order(2)
+    @Bean
+    public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/api/**", "/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**")
             .cors(cors -> cors.configurationSource(corsSource()))
             .csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -39,6 +58,20 @@ public class SecurityConfig {
             )
             .headers(headers -> headers.frameOptions(fo -> fo.disable()))
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Order(3)
+    @Bean
+    public SecurityFilterChain defaultFilterChain(HttpSecurity http) throws Exception {
+        http
+            .cors(cors -> cors.configurationSource(corsSource()))
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .anyRequest().authenticated()
+            )
+            .headers(headers -> headers.frameOptions(fo -> fo.disable()));
         return http.build();
     }
 
@@ -55,7 +88,8 @@ public class SecurityConfig {
     private CorsConfigurationSource corsSource() {
         var config = new CorsConfiguration();
         config.setAllowedOriginPatterns(List.of("*"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS",
+            "PROPFIND", "PROPPATCH", "MKCOL", "MKCALENDAR", "REPORT", "MOVE", "COPY", "LOCK", "UNLOCK"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
         var source = new UrlBasedCorsConfigurationSource();

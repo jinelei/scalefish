@@ -29,3 +29,18 @@ databaseChangeLog:
   - include:
       file: changeset/014-init-default-token.sql
       relativeToChangelogFile: true
+  - include:
+      file: changeset/015-create-calendars-table.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changeset/016-create-calendar-events-table.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changeset/017-create-address-books-table.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changeset/018-create-contacts-table.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changeset/019-add-calendar-event-fields.sql
+      relativeToChangelogFile: true
