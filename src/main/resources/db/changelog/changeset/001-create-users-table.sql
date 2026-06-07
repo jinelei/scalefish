@@ -5,6 +5,6 @@ CREATE TABLE users (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255),
     email VARCHAR(255),
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

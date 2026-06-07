@@ -10,8 +10,8 @@ CREATE TABLE bookmarks (
     is_pinned BOOLEAN DEFAULT FALSE,
     click_count INT DEFAULT 0,
     category_id BIGINT,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 ALTER TABLE bookmarks ADD CONSTRAINT fk_bookmarks_category FOREIGN KEY (category_id) REFERENCES categories(id);

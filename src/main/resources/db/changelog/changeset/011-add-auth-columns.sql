@@ -8,8 +8,8 @@ CREATE TABLE refresh_tokens (
     id BIGINT PRIMARY KEY,
     token VARCHAR(255) NOT NULL,
     user_id BIGINT NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP,
+    expires_at TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
