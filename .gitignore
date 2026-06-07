@@ -21,3 +21,6 @@ Thumbs.db
 
 # Dev profile
 application-dev.yml
+
+# Prod profile (contains sensitive credentials)
+application-prod.yml
