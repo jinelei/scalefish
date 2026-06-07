@@ -15,6 +15,7 @@ app:
   admin:
     username: admin
     # password: optional, auto-generated if not set
+    # token: optional, auto-generated API token (e.g. sf_xxx...)
     name: Administrator
     email: jinelei@163.com
 

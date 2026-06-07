@@ -32,6 +32,7 @@ public class AppProperties {
         private String password;
         private String name;
         private String email;
+        private String token;
 
         public String getUsername() {
             return username;
@@ -63,6 +64,14 @@ public class AppProperties {
 
         public void setEmail(String email) {
             this.email = email;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
         }
     }
 }
