@@ -54,6 +54,9 @@ public class CalendarEvent extends BaseEntity {
     @Column(name = "event_sequence", nullable = false)
     private int sequence;
 
+    @Column(length = 255)
+    private String uid;
+
     @Column(name = "ical_data", columnDefinition = "TEXT")
     private String icalData;
 

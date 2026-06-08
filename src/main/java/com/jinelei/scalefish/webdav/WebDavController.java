@@ -9,10 +9,12 @@ import com.jinelei.scalefish.repository.AddressBookRepository;
 import com.jinelei.scalefish.repository.CalendarEventRepository;
 import com.jinelei.scalefish.repository.CalendarRepository;
 import com.jinelei.scalefish.repository.ContactRepository;
+import com.jinelei.scalefish.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -22,8 +24,13 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,25 +39,41 @@ import java.util.regex.Pattern;
 @RequestMapping("/webdav")
 public class WebDavController {
 
+    private static final DateTimeFormatter ICAL_DT_FMT =
+        DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
+    private static final DateTimeFormatter ICAL_DATE_FMT =
+        DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter HTTP_DATE_FMT =
+        DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'")
+            .withZone(ZoneId.of("GMT"));
+
     private final CalendarRepository calendarRepository;
     private final CalendarEventRepository calendarEventRepository;
     private final AddressBookRepository addressBookRepository;
     private final ContactRepository contactRepository;
+    private final UserRepository userRepository;
 
     public WebDavController(CalendarRepository calendarRepository,
                              CalendarEventRepository calendarEventRepository,
                              AddressBookRepository addressBookRepository,
-                             ContactRepository contactRepository) {
+                             ContactRepository contactRepository,
+                             UserRepository userRepository) {
         this.calendarRepository = calendarRepository;
         this.calendarEventRepository = calendarEventRepository;
         this.addressBookRepository = addressBookRepository;
         this.contactRepository = contactRepository;
+        this.userRepository = userRepository;
     }
 
     private User currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof User user) {
+        if (auth == null) return null;
+        Object principal = auth.getPrincipal();
+        if (principal instanceof User user) {
             return user;
+        }
+        if (principal instanceof UserDetails userDetails) {
+            return userRepository.findByUsername(userDetails.getUsername()).orElse(null);
         }
         return null;
     }
@@ -69,46 +92,59 @@ public class WebDavController {
         switch (method.toUpperCase()) {
             case "OPTIONS" -> handleOptions(response);
             case "PROPFIND" -> handlePropfind(request, response, path, user);
-            case "GET" -> handleGet(response, path, user);
+            case "GET" -> handleGet(request, response, path, user);
+            case "HEAD" -> handleGet(request, response, path, user);
             case "PUT" -> handlePut(request, response, path, user);
             case "DELETE" -> handleDelete(response, path, user);
             case "REPORT" -> handleReport(request, response, path, user);
             case "MKCOL", "MKCALENDAR" -> handleMkcol(request, response, path, user);
+            case "PROPPATCH" -> handleProppatch(request, response, path);
+            case "MOVE" -> response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
+            case "COPY" -> response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
+            case "LOCK" -> handleLock(response, path);
+            case "UNLOCK" -> response.setStatus(HttpServletResponse.SC_NO_CONTENT);
             default -> response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
         }
     }
 
     private void handleOptions(HttpServletResponse response) {
         response.setHeader("DAV", "1, 2, 3, calendar-access, addressbook-access");
-        response.setHeader("Allow", "OPTIONS, PROPFIND, GET, PUT, DELETE, REPORT, MKCOL, MKCALENDAR");
+        response.setHeader("Allow", "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, REPORT, MKCOL, MKCALENDAR, PROPPATCH, MOVE, COPY, LOCK, UNLOCK");
         response.setHeader("MS-Author-Via", "DAV");
     }
+
+    // ──────────────────────────────────────────────
+    // PROPFIND
+    // ──────────────────────────────────────────────
 
     private void handlePropfind(HttpServletRequest request, HttpServletResponse response,
                                  String path, User user) throws IOException {
         String depth = request.getHeader("Depth");
         if (depth == null) depth = "1";
 
+        String baseUrl = request.getScheme() + "://" + request.getHeader("Host") + "/webdav";
+
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         xml.append("<multistatus xmlns=\"DAV:\"");
         xml.append(" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"");
-        xml.append(" xmlns:CR=\"urn:ietf:params:xml:ns:carddav\">");
-
-        String baseUrl = request.getScheme() + "://" + request.getHeader("Host") + "/webdav";
+        xml.append(" xmlns:CR=\"urn:ietf:params:xml:ns:carddav\"");
+        xml.append(" xmlns:CS=\"http://calendarserver.org/ns/\">");
 
         if (path.isEmpty() || path.equals("/")) {
-            addResponse(xml, baseUrl + "/", "collection", null);
-            addResponse(xml, baseUrl + "/calendars/", "collection", null);
-            addResponse(xml, baseUrl + "/contacts/", "collection", null);
+            addRootResponse(xml, baseUrl, user);
             if (!"0".equals(depth)) {
-                listUserCalendars(xml, user, baseUrl, depth);
-                listUserAddressBooks(xml, user, baseUrl, depth);
+                addResponse(xml, baseUrl + "/calendars/", "collection", "Calendars", null, null, null);
+                listUserCalendarsPropfind(xml, user, baseUrl, depth);
+                addResponse(xml, baseUrl + "/contacts/", "collection", "Contacts", null, null, null);
+                listUserAddressBooksPropfind(xml, user, baseUrl, depth);
             }
         } else if (path.startsWith("/calendars")) {
             handleCalendarPropfind(xml, path, user, baseUrl, depth);
         } else if (path.startsWith("/contacts")) {
             handleContactPropfind(xml, path, user, baseUrl, depth);
+        } else if (path.startsWith("/principal")) {
+            addPrincipalResponse(xml, baseUrl, user);
         }
 
         xml.append("</multistatus>");
@@ -117,37 +153,75 @@ public class WebDavController {
         response.getWriter().write(xml.toString());
     }
 
-    private void listUserCalendars(StringBuilder xml, User user, String baseUrl, String depth) {
+    private void addRootResponse(StringBuilder xml, String baseUrl, User user) {
+        xml.append("<response><href>").append(escapeXml(baseUrl + "/")).append("</href><propstat><prop>");
+        xml.append("<resourcetype><collection/></resourcetype>");
+        xml.append("<displayname>Scalefish</displayname>");
+        xml.append("<current-user-principal><href>").append(escapeXml(baseUrl + "/principal/")).append("</href></current-user-principal>");
+        xml.append("<principal-collection-set><href>").append(escapeXml(baseUrl + "/principal/")).append("</href></principal-collection-set>");
+        xml.append("<calendar-home-set><href>").append(escapeXml(baseUrl + "/calendars/")).append("</href></calendar-home-set>");
+        xml.append("<addressbook-home-set><href>").append(escapeXml(baseUrl + "/contacts/")).append("</href></addressbook-home-set>");
+        xml.append("<CS:getctag>").append(ctag(user)).append("</CS:getctag>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+    }
+
+    private void addPrincipalResponse(StringBuilder xml, String baseUrl, User user) {
+        xml.append("<response><href>").append(escapeXml(baseUrl + "/principal/")).append("</href><propstat><prop>");
+        xml.append("<resourcetype><collection/></resourcetype>");
+        xml.append("<displayname>Principal</displayname>");
+        xml.append("<current-user-principal><href>").append(escapeXml(baseUrl + "/principal/")).append("</href></current-user-principal>");
+        xml.append("<calendar-home-set><href>").append(escapeXml(baseUrl + "/calendars/")).append("</href></calendar-home-set>");
+        xml.append("<addressbook-home-set><href>").append(escapeXml(baseUrl + "/contacts/")).append("</href></addressbook-home-set>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+    }
+
+    private String eventUrl(String baseUrl, Long calId, CalendarEvent event) {
+        String filename = event.getUid() != null ? event.getUid() : String.valueOf(event.getId());
+        return baseUrl + "/calendars/" + calId + "/" + filename + ".ics";
+    }
+
+    private void listUserCalendarsPropfind(StringBuilder xml, User user, String baseUrl, String depth) {
         for (var cal : calendarRepository.findByUserIdOrderByCreatedAtAsc(user.getId())) {
             String calUrl = baseUrl + "/calendars/" + cal.getId() + "/";
-            addResponse(xml, calUrl, "calendar", cal.getName());
+            addCalendarResponse(xml, calUrl, cal);
             if ("infinity".equals(depth)) {
                 for (var event : calendarEventRepository.findByCalendarIdOrderByStartTimeAsc(cal.getId())) {
-                    addResponse(xml, calUrl + event.getId() + ".ics", null, event.getTitle());
+                    addEventResponse(xml, eventUrl(baseUrl, cal.getId(), event), event);
                 }
             }
         }
     }
 
-    private void listUserAddressBooks(StringBuilder xml, User user, String baseUrl, String depth) {
+    private void listUserAddressBooksPropfind(StringBuilder xml, User user, String baseUrl, String depth) {
         for (var ab : addressBookRepository.findByUserIdOrderByCreatedAtAsc(user.getId())) {
             String abUrl = baseUrl + "/contacts/" + ab.getId() + "/";
-            addResponse(xml, abUrl, "addressbook", ab.getName());
+            addAddressBookResponse(xml, abUrl, ab);
             if ("infinity".equals(depth)) {
                 for (var contact : contactRepository.findByAddressBookIdOrderByNameAsc(ab.getId())) {
-                    addResponse(xml, abUrl + contact.getId() + ".vcf", null, contact.getName());
+                    addContactResponse(xml, abUrl + contact.getId() + ".vcf", contact);
                 }
             }
         }
+    }
+
+    private java.util.Optional<CalendarEvent> findEventByFilename(Long calId, String filename) {
+        try {
+            Long eventId = Long.parseLong(filename);
+            var byId = calendarEventRepository.findById(eventId);
+            if (byId.isPresent() && byId.get().getCalendar().getId().equals(calId)) {
+                return byId;
+            }
+        } catch (NumberFormatException ignored) {}
+        return calendarEventRepository.findByUidAndCalendarId(filename, calId);
     }
 
     private void handleCalendarPropfind(StringBuilder xml, String path, User user,
                                          String baseUrl, String depth) {
         String rest = path.substring("/calendars".length());
         if (rest.isEmpty() || rest.equals("/")) {
-            addResponse(xml, baseUrl + "/calendars/", "collection", null);
+            addResponse(xml, baseUrl + "/calendars/", "collection", "Calendars", null, null, null);
             if (!"0".equals(depth)) {
-                listUserCalendars(xml, user, baseUrl, depth);
+                listUserCalendarsPropfind(xml, user, baseUrl, depth);
             }
             return;
         }
@@ -155,15 +229,20 @@ public class WebDavController {
         if (clean.endsWith("/")) clean = clean.substring(0, clean.length() - 1);
 
         if (clean.endsWith(".ics")) {
-            String eid = clean.substring(0, clean.length() - 4);
-            try {
-                Long eventId = Long.parseLong(eid);
-                calendarEventRepository.findById(eventId).ifPresent(event -> {
-                    if (event.getCalendar().getUser().getId().equals(user.getId())) {
-                        addResponse(xml, baseUrl + path, null, event.getTitle());
-                    }
-                });
-            } catch (NumberFormatException ignored) {}
+            String filename = clean.substring(0, clean.length() - 4);
+            int slashIdx = filename.lastIndexOf('/');
+            if (slashIdx >= 0) {
+                String calIdStr = filename.substring(0, slashIdx);
+                String eventFile = filename.substring(slashIdx + 1);
+                try {
+                    Long calId = Long.parseLong(calIdStr);
+                    findEventByFilename(calId, eventFile).ifPresent(event -> {
+                        if (event.getCalendar().getUser().getId().equals(user.getId())) {
+                            addEventResponse(xml, baseUrl + path, event);
+                        }
+                    });
+                } catch (NumberFormatException ignored) {}
+            }
             return;
         }
 
@@ -172,10 +251,10 @@ public class WebDavController {
             calendarRepository.findById(calId).ifPresent(cal -> {
                 if (cal.getUser().getId().equals(user.getId())) {
                     String calUrl = baseUrl + "/calendars/" + calId + "/";
-                    addResponse(xml, calUrl, "calendar", cal.getName());
+                    addCalendarResponse(xml, calUrl, cal);
                     if (!"0".equals(depth)) {
                         for (var event : calendarEventRepository.findByCalendarIdOrderByStartTimeAsc(calId)) {
-                            addResponse(xml, calUrl + event.getId() + ".ics", null, event.getTitle());
+                            addEventResponse(xml, eventUrl(baseUrl, calId, event), event);
                         }
                     }
                 }
@@ -187,9 +266,9 @@ public class WebDavController {
                                         String baseUrl, String depth) {
         String rest = path.substring("/contacts".length());
         if (rest.isEmpty() || rest.equals("/")) {
-            addResponse(xml, baseUrl + "/contacts/", "collection", null);
+            addResponse(xml, baseUrl + "/contacts/", "collection", "Contacts", null, null, null);
             if (!"0".equals(depth)) {
-                listUserAddressBooks(xml, user, baseUrl, depth);
+                listUserAddressBooksPropfind(xml, user, baseUrl, depth);
             }
             return;
         }
@@ -202,7 +281,7 @@ public class WebDavController {
                 Long contactId = Long.parseLong(cid);
                 contactRepository.findById(contactId).ifPresent(contact -> {
                     if (contact.getAddressBook().getUser().getId().equals(user.getId())) {
-                        addResponse(xml, baseUrl + path, null, contact.getName());
+                        addContactResponse(xml, baseUrl + path, contact);
                     }
                 });
             } catch (NumberFormatException ignored) {}
@@ -214,10 +293,10 @@ public class WebDavController {
             addressBookRepository.findById(abId).ifPresent(ab -> {
                 if (ab.getUser().getId().equals(user.getId())) {
                     String abUrl = baseUrl + "/contacts/" + abId + "/";
-                    addResponse(xml, abUrl, "addressbook", ab.getName());
+                    addAddressBookResponse(xml, abUrl, ab);
                     if (!"0".equals(depth)) {
                         for (var contact : contactRepository.findByAddressBookIdOrderByNameAsc(abId)) {
-                            addResponse(xml, abUrl + contact.getId() + ".vcf", null, contact.getName());
+                            addContactResponse(xml, abUrl + contact.getId() + ".vcf", contact);
                         }
                     }
                 }
@@ -225,38 +304,116 @@ public class WebDavController {
         } catch (NumberFormatException ignored) {}
     }
 
-    private void addResponse(StringBuilder xml, String href, String resType, String displayName) {
+    // ──────────────────────────────────────────────
+    // PROPFIND response builders
+    // ──────────────────────────────────────────────
+
+    private void addResponse(StringBuilder xml, String href, String resType,
+                              String displayName, String contentType, Long contentLength, String etag) {
         xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
         xml.append("<displayname>").append(escapeXml(displayName != null ? displayName : "")).append("</displayname>");
         xml.append("<resourcetype>");
         if (resType != null) {
             xml.append("<collection/>");
-            if ("calendar".equals(resType)) {
-                xml.append("<C:calendar/>");
-            } else if ("addressbook".equals(resType)) {
-                xml.append("<CR:addressbook/>");
-            }
         }
         xml.append("</resourcetype>");
-        xml.append("<getcontenttype>").append("httpd/unix-directory".equals(resType) || "collection".equals(resType) || resType == null || "calendar".equals(resType) || "addressbook".equals(resType) ? "" : "").append("</getcontenttype>");
-        xml.append("<getetag>\"scalefish-").append(System.currentTimeMillis()).append("\"</getetag>");
+        if (contentType != null) {
+            xml.append("<getcontenttype>").append(escapeXml(contentType)).append("</getcontenttype>");
+        }
+        if (contentLength != null) {
+            xml.append("<getcontentlength>").append(contentLength).append("</getcontentlength>");
+        }
+        if (etag != null) {
+            xml.append("<getetag>").append(etag).append("</getetag>");
+        }
         xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
     }
 
-    private void handleGet(HttpServletResponse response, String path, User user) throws IOException {
+    private void addCalendarResponse(StringBuilder xml, String href, CalendarEntity cal) {
+        String etag = "\"" + cal.getId() + "-" + cal.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+        xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
+        xml.append("<displayname>").append(escapeXml(cal.getName())).append("</displayname>");
+        xml.append("<resourcetype><collection/><C:calendar/></resourcetype>");
+        xml.append("<getcontenttype>httpd/unix-directory</getcontenttype>");
+        xml.append("<getetag>").append(etag).append("</getetag>");
+        xml.append("<C:calendar-description>").append(escapeXml(cal.getDescription() != null ? cal.getDescription() : "")).append("</C:calendar-description>");
+        xml.append("<C:calendar-color>").append(escapeXml(cal.getDisplayColor() != null ? cal.getDisplayColor() : "#1C6DD0")).append("</C:calendar-color>");
+        xml.append("<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set>");
+        xml.append("<CS:getctag>").append(etag).append("</CS:getctag>");
+        xml.append("<getlastmodified>").append(formatHttpDate(cal.getUpdatedAt())).append("</getlastmodified>");
+        xml.append("<creationdate>").append(formatHttpDate(cal.getCreatedAt())).append("</creationdate>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+    }
+
+    private void addEventResponse(StringBuilder xml, String href, CalendarEvent event) {
+        String etag = "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+        String content = event.getIcalData();
+        if (content == null) content = rebuildIcal(event);
+        long len = content.getBytes(StandardCharsets.UTF_8).length;
+        xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
+        xml.append("<displayname>").append(escapeXml(event.getTitle())).append("</displayname>");
+        xml.append("<resourcetype/>");
+        xml.append("<getcontenttype>text/calendar; charset=utf-8</getcontenttype>");
+        xml.append("<getcontentlength>").append(len).append("</getcontentlength>");
+        xml.append("<getetag>").append(etag).append("</getetag>");
+        xml.append("<getlastmodified>").append(formatHttpDate(event.getUpdatedAt())).append("</getlastmodified>");
+        xml.append("<creationdate>").append(formatHttpDate(event.getCreatedAt())).append("</creationdate>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+    }
+
+    private void addAddressBookResponse(StringBuilder xml, String href, AddressBook ab) {
+        String etag = "\"" + ab.getId() + "-" + ab.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+        xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
+        xml.append("<displayname>").append(escapeXml(ab.getName())).append("</displayname>");
+        xml.append("<resourcetype><collection/><CR:addressbook/></resourcetype>");
+        xml.append("<getcontenttype>httpd/unix-directory</getcontenttype>");
+        xml.append("<getetag>").append(etag).append("</getetag>");
+        xml.append("<CR:supported-addressbook-component-set><CR:comp name=\"VCARD\"/></CR:supported-addressbook-component-set>");
+        xml.append("<CS:getctag>").append(etag).append("</CS:getctag>");
+        xml.append("<getlastmodified>").append(formatHttpDate(ab.getUpdatedAt())).append("</getlastmodified>");
+        xml.append("<creationdate>").append(formatHttpDate(ab.getCreatedAt())).append("</creationdate>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+    }
+
+    private void addContactResponse(StringBuilder xml, String href, Contact contact) {
+        String etag = "\"" + contact.getId() + "-" + contact.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+        String content = contact.getVcardData();
+        if (content == null) content = rebuildVcard(contact);
+        long len = content.getBytes(StandardCharsets.UTF_8).length;
+        xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
+        xml.append("<displayname>").append(escapeXml(contact.getName())).append("</displayname>");
+        xml.append("<resourcetype/>");
+        xml.append("<getcontenttype>text/vcard; charset=utf-8</getcontenttype>");
+        xml.append("<getcontentlength>").append(len).append("</getcontentlength>");
+        xml.append("<getetag>").append(etag).append("</getetag>");
+        xml.append("<getlastmodified>").append(formatHttpDate(contact.getUpdatedAt())).append("</getlastmodified>");
+        xml.append("<creationdate>").append(formatHttpDate(contact.getCreatedAt())).append("</creationdate>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+    }
+
+    // ──────────────────────────────────────────────
+    // GET / HEAD
+    // ──────────────────────────────────────────────
+
+    private void handleGet(HttpServletRequest request, HttpServletResponse response,
+                            String path, User user) throws IOException {
+        boolean isHead = "HEAD".equals(request.getMethod());
+
         if (path.endsWith(".ics")) {
-            Matcher m = Pattern.compile("/calendars/(\\d+)/(\\d+)\\.ics").matcher(path);
-            if (m.find()) {
-                Long eventId = Long.parseLong(m.group(2));
-                var opt = calendarEventRepository.findById(eventId);
-                if (opt.isPresent() && opt.get().getCalendar().getUser().getId().equals(user.getId())) {
-                    String ical = opt.get().getIcalData();
-                    if (ical == null) ical = rebuildIcal(opt.get());
-                    response.setContentType("text/calendar; charset=utf-8");
-                    response.setHeader("ETag", "\"sf-" + eventId + "\"");
+            CalendarEvent event = resolveEventFromPath(path, user);
+            if (event != null) {
+                String ical = event.getIcalData();
+                if (ical == null) ical = rebuildIcal(event);
+                byte[] bytes = ical.getBytes(StandardCharsets.UTF_8);
+                String etag = "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+                response.setContentType("text/calendar; charset=utf-8");
+                response.setContentLength(bytes.length);
+                response.setHeader("ETag", etag);
+                response.setHeader("Last-Modified", formatHttpDate(event.getUpdatedAt()));
+                if (!isHead) {
                     response.getWriter().write(ical);
-                    return;
                 }
+                return;
             }
         } else if (path.endsWith(".vcf")) {
             Matcher m = Pattern.compile("/contacts/(\\d+)/(\\d+)\\.vcf").matcher(path);
@@ -266,9 +423,15 @@ public class WebDavController {
                 if (opt.isPresent() && opt.get().getAddressBook().getUser().getId().equals(user.getId())) {
                     String vcard = opt.get().getVcardData();
                     if (vcard == null) vcard = rebuildVcard(opt.get());
+                    byte[] bytes = vcard.getBytes(StandardCharsets.UTF_8);
+                    String etag = "\"" + opt.get().getId() + "-" + opt.get().getUpdatedAt().format(ICAL_DT_FMT) + "\"";
                     response.setContentType("text/vcard; charset=utf-8");
-                    response.setHeader("ETag", "\"sf-" + contactId + "\"");
-                    response.getWriter().write(vcard);
+                    response.setContentLength(bytes.length);
+                    response.setHeader("ETag", etag);
+                    response.setHeader("Last-Modified", formatHttpDate(opt.get().getUpdatedAt()));
+                    if (!isHead) {
+                        response.getWriter().write(vcard);
+                    }
                     return;
                 }
             }
@@ -276,37 +439,50 @@ public class WebDavController {
         response.sendError(HttpServletResponse.SC_NOT_FOUND);
     }
 
+    // ──────────────────────────────────────────────
+    // PUT
+    // ──────────────────────────────────────────────
+
     private void handlePut(HttpServletRequest request, HttpServletResponse response,
                             String path, User user) throws IOException {
         String body = readBody(request.getInputStream());
+        String ifNoneMatch = request.getHeader("If-None-Match");
 
         if (path.endsWith(".ics")) {
-            Matcher m = Pattern.compile("/calendars/(\\d+)/(\\d+)\\.ics").matcher(path);
+            Matcher m = Pattern.compile("/calendars/(\\d+)/([^/]+)\\.ics").matcher(path);
             if (m.find()) {
                 Long calId = Long.parseLong(m.group(1));
-                Long eventId = Long.parseLong(m.group(2));
+                String filename = m.group(2);
                 var calOpt = calendarRepository.findById(calId);
                 if (calOpt.isEmpty() || !calOpt.get().getUser().getId().equals(user.getId())) {
                     response.sendError(HttpServletResponse.SC_FORBIDDEN);
                     return;
                 }
-                var opt = calendarEventRepository.findById(eventId);
+                var opt = findEventByFilename(calId, filename);
+                if (opt.isPresent() && "*".equals(ifNoneMatch)) {
+                    response.setStatus(HttpServletResponse.SC_PRECONDITION_FAILED);
+                    return;
+                }
                 if (opt.isPresent()) {
                     var event = opt.get();
                     event.setIcalData(body);
                     parseIcalIntoEvent(body, event);
                     calendarEventRepository.save(event);
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+                    response.setHeader("ETag", "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"");
                 } else {
                     var event = new CalendarEvent();
                     event.setCalendar(calOpt.get());
                     event.setIcalData(body);
                     parseIcalIntoEvent(body, event);
+                    if (event.getUid() == null && !isNumeric(filename)) {
+                        event.setUid(filename);
+                    }
                     if (event.getTitle() == null) event.setTitle("Event");
                     calendarEventRepository.save(event);
                     response.setStatus(HttpServletResponse.SC_CREATED);
+                    response.setHeader("ETag", "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"");
                 }
-                response.setHeader("ETag", "\"sf-" + eventId + "\"");
                 return;
             }
         } else if (path.endsWith(".vcf")) {
@@ -320,6 +496,7 @@ public class WebDavController {
                     parseVcardIntoContact(body, contact);
                     contactRepository.save(contact);
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+                    response.setHeader("ETag", "\"" + contact.getId() + "-" + contact.getUpdatedAt().format(ICAL_DT_FMT) + "\"");
                     return;
                 }
             }
@@ -327,12 +504,17 @@ public class WebDavController {
         response.sendError(HttpServletResponse.SC_NOT_FOUND);
     }
 
+    // ──────────────────────────────────────────────
+    // DELETE
+    // ──────────────────────────────────────────────
+
     private void handleDelete(HttpServletResponse response, String path, User user) throws IOException {
         if (path.endsWith(".ics")) {
-            Matcher m = Pattern.compile("/calendars/\\d+/(\\d+)\\.ics").matcher(path);
+            Matcher m = Pattern.compile("/calendars/(\\d+)/([^/]+)\\.ics").matcher(path);
             if (m.find()) {
-                Long eventId = Long.parseLong(m.group(1));
-                var opt = calendarEventRepository.findById(eventId);
+                Long calId = Long.parseLong(m.group(1));
+                String filename = m.group(2);
+                var opt = findEventByFilename(calId, filename);
                 if (opt.isPresent() && opt.get().getCalendar().getUser().getId().equals(user.getId())) {
                     calendarEventRepository.delete(opt.get());
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
@@ -354,33 +536,89 @@ public class WebDavController {
         response.sendError(HttpServletResponse.SC_NOT_FOUND);
     }
 
+    // ──────────────────────────────────────────────
+    // REPORT
+    // ──────────────────────────────────────────────
+
     private void handleReport(HttpServletRequest request, HttpServletResponse response,
                                String path, User user) throws IOException {
+        String body = readBody(request.getInputStream());
         String baseUrl = request.getScheme() + "://" + request.getHeader("Host") + "/webdav";
+
+        if (body.contains("addressbook-multiget")) {
+            handleAddressbookMultiget(request, response, path, user, baseUrl, body);
+            return;
+        }
+        if (body.contains("addressbook-query")) {
+            handleAddressbookQuery(request, response, path, user, baseUrl, body);
+            return;
+        }
+        if (body.contains("calendar-query") || body.contains("calendar-multiget")) {
+            handleCalendarQuery(request, response, path, user, baseUrl, body);
+            return;
+        }
+        if (body.contains("principal-property-search") || body.contains("principal-search-property-set")) {
+            handlePrincipalReport(response);
+            return;
+        }
+
+        response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
+    }
+
+    private void handleCalendarQuery(HttpServletRequest request, HttpServletResponse response,
+                                      String path, User user, String baseUrl, String body) throws IOException {
+        String depth = request.getHeader("Depth");
+        if (depth == null) depth = "1";
+
+        String calIdStr = extractPathSegment(path, "/calendars/");
+        if (calIdStr == null) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+        if (calIdStr.endsWith("/")) calIdStr = calIdStr.substring(0, calIdStr.length() - 1);
+
+        Long calId;
+        try {
+            calId = Long.parseLong(calIdStr);
+        } catch (NumberFormatException e) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
+        List<CalendarEvent> events;
+        String timeStart = extractXmlValue(body, "start");
+        String timeEnd = extractXmlValue(body, "end");
+
+        if (timeStart != null || timeEnd != null) {
+            LocalDateTime start = timeStart != null ? parseIcalDt(timeStart) : LocalDateTime.MIN;
+            LocalDateTime end = timeEnd != null ? parseIcalDt(timeEnd) : LocalDateTime.MAX;
+            events = calendarEventRepository.findByCalendarIdAndStartTimeBetweenOrderByStartTimeAsc(calId, start, end);
+        } else {
+            events = calendarEventRepository.findByCalendarIdOrderByStartTimeAsc(calId);
+        }
+
+        boolean wantData = body.contains("calendar-data");
+        boolean wantEtag = body.contains("getetag");
+
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
-        xml.append("<multistatus xmlns=\"DAV:\"");
-        xml.append(" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"");
-        xml.append(" xmlns:CR=\"urn:ietf:params:xml:ns:carddav\">");
+        xml.append("<multistatus xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">");
 
-        if (path.startsWith("/calendars")) {
-            Matcher m = Pattern.compile("/calendars/(\\d+)/").matcher(path);
-            if (m.find()) {
-                Long calId = Long.parseLong(m.group(1));
-                for (var event : calendarEventRepository.findByCalendarIdOrderByStartTimeAsc(calId)) {
-                    String url = baseUrl + "/calendars/" + calId + "/" + event.getId() + ".ics";
-                    addResponse(xml, url, null, event.getTitle());
-                }
+        for (var event : events) {
+            if (!event.getCalendar().getUser().getId().equals(user.getId())) continue;
+            String url = eventUrl(baseUrl, calId, event);
+            String etag = "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+
+            xml.append("<response><href>").append(escapeXml(url)).append("</href><propstat><prop>");
+            if (wantEtag) {
+                xml.append("<getetag>").append(etag).append("</getetag>");
             }
-        } else if (path.startsWith("/contacts")) {
-            Matcher m = Pattern.compile("/contacts/(\\d+)/").matcher(path);
-            if (m.find()) {
-                Long abId = Long.parseLong(m.group(1));
-                for (var contact : contactRepository.findByAddressBookIdOrderByNameAsc(abId)) {
-                    String url = baseUrl + "/contacts/" + abId + "/" + contact.getId() + ".vcf";
-                    addResponse(xml, url, null, contact.getName());
-                }
+            if (wantData) {
+                String ical = event.getIcalData();
+                if (ical == null) ical = rebuildIcal(event);
+                xml.append("<C:calendar-data>").append(escapeXml(ical)).append("</C:calendar-data>");
             }
+            xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
         }
 
         xml.append("</multistatus>");
@@ -389,14 +627,126 @@ public class WebDavController {
         response.getWriter().write(xml.toString());
     }
 
+    private void handleAddressbookMultiget(HttpServletRequest request, HttpServletResponse response,
+                                            String path, User user, String baseUrl, String body) throws IOException {
+        boolean wantData = body.contains("address-data");
+        boolean wantEtag = body.contains("getetag");
+
+        Pattern hrefPattern = Pattern.compile("<D:href>(.*?)</D:href>");
+        Matcher m = hrefPattern.matcher(body);
+
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        xml.append("<multistatus xmlns=\"DAV:\" xmlns:CR=\"urn:ietf:params:xml:ns:carddav\">");
+
+        while (m.find()) {
+            String href = m.group(1).trim();
+            Matcher idMatcher = Pattern.compile("/(\\d+)\\.vcf").matcher(href);
+            if (!idMatcher.find()) continue;
+            Long contactId = Long.parseLong(idMatcher.group(1));
+            var opt = contactRepository.findById(contactId);
+            if (opt.isEmpty() || !opt.get().getAddressBook().getUser().getId().equals(user.getId())) continue;
+            var contact = opt.get();
+
+            String etag = "\"" + contact.getId() + "-" + contact.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+            xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
+            if (wantEtag) {
+                xml.append("<getetag>").append(etag).append("</getetag>");
+            }
+            if (wantData) {
+                String vcard = contact.getVcardData();
+                if (vcard == null) vcard = rebuildVcard(contact);
+                xml.append("<CR:address-data>").append(escapeXml(vcard)).append("</CR:address-data>");
+            }
+            xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+        }
+
+        xml.append("</multistatus>");
+        response.setContentType("application/xml; charset=utf-8");
+        response.setStatus(207);
+        response.getWriter().write(xml.toString());
+    }
+
+    private void handleAddressbookQuery(HttpServletRequest request, HttpServletResponse response,
+                                         String path, User user, String baseUrl, String body) throws IOException {
+        String abIdStr = extractPathSegment(path, "/contacts/");
+        if (abIdStr == null) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+        if (abIdStr.endsWith("/")) abIdStr = abIdStr.substring(0, abIdStr.length() - 1);
+
+        Long abId;
+        try {
+            abId = Long.parseLong(abIdStr);
+        } catch (NumberFormatException e) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
+        boolean wantData = body.contains("address-data");
+        boolean wantEtag = body.contains("getetag");
+
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        xml.append("<multistatus xmlns=\"DAV:\" xmlns:CR=\"urn:ietf:params:xml:ns:carddav\">");
+
+        for (var contact : contactRepository.findByAddressBookIdOrderByNameAsc(abId)) {
+            if (!contact.getAddressBook().getUser().getId().equals(user.getId())) continue;
+            String url = baseUrl + "/contacts/" + abId + "/" + contact.getId() + ".vcf";
+            String etag = "\"" + contact.getId() + "-" + contact.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+
+            xml.append("<response><href>").append(escapeXml(url)).append("</href><propstat><prop>");
+            if (wantEtag) {
+                xml.append("<getetag>").append(etag).append("</getetag>");
+            }
+            if (wantData) {
+                String vcard = contact.getVcardData();
+                if (vcard == null) vcard = rebuildVcard(contact);
+                xml.append("<CR:address-data>").append(escapeXml(vcard)).append("</CR:address-data>");
+            }
+            xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+        }
+
+        xml.append("</multistatus>");
+        response.setContentType("application/xml; charset=utf-8");
+        response.setStatus(207);
+        response.getWriter().write(xml.toString());
+    }
+
+    private void handlePrincipalReport(HttpServletResponse response) throws IOException {
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        xml.append("<multistatus xmlns=\"DAV:\">");
+        xml.append("<response><href>/webdav/principal/</href>");
+        xml.append("<propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat>");
+        xml.append("</response></multistatus>");
+        response.setContentType("application/xml; charset=utf-8");
+        response.setStatus(207);
+        response.getWriter().write(xml.toString());
+    }
+
+    // ──────────────────────────────────────────────
+    // MKCOL / MKCALENDAR
+    // ──────────────────────────────────────────────
+
     private void handleMkcol(HttpServletRequest request, HttpServletResponse response,
                               String path, User user) throws IOException {
+        String body = readBody(request.getInputStream());
+
         if (path.startsWith("/calendars/")) {
-            String name = path.substring("/calendars/".length());
-            if (name.endsWith("/")) name = name.substring(0, name.length() - 1);
+            String name = extractCalendarName(body);
+            if (name == null) {
+                name = path.substring("/calendars/".length());
+                if (name.endsWith("/")) name = name.substring(0, name.length() - 1);
+            }
             if (!name.isEmpty()) {
+                String color = extractCalendarColor(body);
+                String desc = extractCalendarDesc(body);
                 var cal = new CalendarEntity();
                 cal.setName(name);
+                cal.setDescription(desc != null ? desc : name);
+                cal.setDisplayColor(color != null ? color : "#1C6DD0");
                 cal.setUser(user);
                 calendarRepository.save(cal);
                 response.setStatus(HttpServletResponse.SC_CREATED);
@@ -405,6 +755,82 @@ public class WebDavController {
         }
         response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
     }
+
+    // ──────────────────────────────────────────────
+    // PROPPATCH
+    // ──────────────────────────────────────────────
+
+    private void handleProppatch(HttpServletRequest request, HttpServletResponse response,
+                                  String path) throws IOException {
+        String body = readBody(request.getInputStream());
+
+        boolean hasDisplayName = body.contains("displayname");
+        boolean hasCalendarColor = body.contains("calendar-color");
+        boolean hasCalendarDesc = body.contains("calendar-description");
+
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        xml.append("<multistatus xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">");
+
+        if (path.startsWith("/calendars/")) {
+            String clean = path.replace("/calendars/", "").replace("/", "");
+            try {
+                Long calId = Long.parseLong(clean);
+                var opt = calendarRepository.findById(calId);
+                if (opt.isPresent()) {
+                    var cal = opt.get();
+                    if (hasDisplayName) {
+                        String name = extractXmlValue(body, "displayname");
+                        if (name != null) cal.setName(name);
+                    }
+                    if (hasCalendarColor) {
+                        String color = extractXmlValue(body, "calendar-color");
+                        if (color != null) cal.setDisplayColor(color);
+                    }
+                    if (hasCalendarDesc) {
+                        String desc = extractXmlValue(body, "calendar-description");
+                        if (desc != null) cal.setDescription(desc);
+                    }
+                    calendarRepository.save(cal);
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
+        xml.append("<response><href>").append(escapeXml(path)).append("</href>");
+        xml.append("<propstat><prop>");
+        if (hasDisplayName) xml.append("<displayname/>");
+        if (hasCalendarColor) xml.append("<C:calendar-color/>");
+        if (hasCalendarDesc) xml.append("<C:calendar-description/>");
+        xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat>");
+        xml.append("</response></multistatus>");
+
+        response.setContentType("application/xml; charset=utf-8");
+        response.setStatus(207);
+        response.getWriter().write(xml.toString());
+    }
+
+    // ──────────────────────────────────────────────
+    // LOCK
+    // ──────────────────────────────────────────────
+
+    private void handleLock(HttpServletResponse response, String path) throws IOException {
+        String token = "opaquelocktoken:sf-" + System.currentTimeMillis();
+        String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+            + "<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery><D:activelock>"
+            + "<D:locktype><D:write/></D:locktype>"
+            + "<D:lockscope><D:exclusive/></D:lockscope>"
+            + "<D:depth>0</D:depth>"
+            + "<D:locktoken><D:href>" + token + "</D:href></D:locktoken>"
+            + "</D:activelock></D:lockdiscovery></D:prop>";
+        response.setContentType("application/xml; charset=utf-8");
+        response.setStatus(200);
+        response.setHeader("Lock-Token", token);
+        response.getWriter().write(xml);
+    }
+
+    // ──────────────────────────────────────────────
+    // Helpers
+    // ──────────────────────────────────────────────
 
     private String extractPath(String requestUri) {
         int idx = requestUri.indexOf("/webdav");
@@ -415,6 +841,41 @@ public class WebDavController {
             path = URLDecoder.decode(path, StandardCharsets.UTF_8);
         } catch (Exception ignored) {}
         return path;
+    }
+
+    private String extractPathSegment(String path, String prefix) {
+        if (!path.startsWith(prefix)) return null;
+        String rest = path.substring(prefix.length());
+        int slash = rest.indexOf('/');
+        return slash >= 0 ? rest.substring(0, slash) : rest;
+    }
+
+    private String extractXmlValue(String xml, String tag) {
+        Pattern p = Pattern.compile(
+            "<([^:>]*:)?\\Q" + tag + "\\E[^>]*>(.*?)</([^:>]*:)?\\Q" + tag + "\\E>",
+            Pattern.DOTALL);
+        Matcher m = p.matcher(xml);
+        return m.find() ? m.group(2).trim() : null;
+    }
+
+    private String extractCalendarName(String body) {
+        String name = extractXmlValue(body, "displayname");
+        if (name != null && !name.isEmpty()) return name;
+        return null;
+    }
+
+    private String extractCalendarColor(String body) {
+        return extractXmlValue(body, "calendar-color");
+    }
+
+    private String extractCalendarDesc(String body) {
+        return extractXmlValue(body, "calendar-description");
+    }
+
+    private String extractValue(String data, String key) {
+        Pattern p = Pattern.compile("(?m)^" + key + "(?:;[^:]*)?:(.+?)(\\r?\\n|$)");
+        Matcher m = p.matcher(data);
+        return m.find() ? m.group(1).trim() : null;
     }
 
     private String readBody(InputStream in) throws IOException {
@@ -429,9 +890,54 @@ public class WebDavController {
     }
 
     private String escapeXml(String s) {
+        if (s == null) return "";
         return s.replace("&", "&amp;").replace("<", "&lt;")
                 .replace(">", "&gt;").replace("\"", "&quot;");
     }
+
+    private String formatHttpDate(LocalDateTime dt) {
+        return ZonedDateTime.of(dt, ZoneId.systemDefault())
+            .withZoneSameInstant(ZoneId.of("GMT"))
+            .format(HTTP_DATE_FMT);
+    }
+
+    private boolean isNumeric(String s) {
+        if (s == null || s.isEmpty()) return false;
+        for (int i = 0; i < s.length(); i++) {
+            if (!Character.isDigit(s.charAt(i))) return false;
+        }
+        return true;
+    }
+
+    private CalendarEvent resolveEventFromPath(String path, User user) {
+        Matcher m = Pattern.compile("/calendars/(\\d+)/([^/]+)\\.ics").matcher(path);
+        if (!m.find()) return null;
+        Long calId = Long.parseLong(m.group(1));
+        String filename = m.group(2);
+        var opt = findEventByFilename(calId, filename);
+        if (opt.isPresent() && opt.get().getCalendar().getUser().getId().equals(user.getId())) {
+            return opt.get();
+        }
+        return null;
+    }
+
+    private String ctag(User user) {
+        var digest = sha256(user.getId() + "-" + System.currentTimeMillis());
+        return "\"sf-ctag-" + digest.substring(0, 16) + "\"";
+    }
+
+    private String sha256(String input) {
+        try {
+            var md = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(md.digest(input.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            return input;
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // iCalendar parsing / rebuilding
+    // ──────────────────────────────────────────────
 
     private void parseIcalIntoEvent(String icalData, CalendarEvent event) {
         String title = extractValue(icalData, "SUMMARY");
@@ -445,15 +951,23 @@ public class WebDavController {
         String categories = extractValue(icalData, "CATEGORIES");
         String url = extractValue(icalData, "URL");
         String sequence = extractValue(icalData, "SEQUENCE");
+        String uid = extractValue(icalData, "UID");
 
-        if (title != null) event.setTitle(title.replace("\\,", ",").replace("\\n", "\n"));
-        if (desc != null) event.setDescription(desc.replace("\\n", "\n"));
-        if (loc != null) event.setLocation(loc.replace("\\,", ","));
+        if (uid != null) event.setUid(uid.replace("@scalefish", ""));
+        if (title != null) event.setTitle(title.replace("\\,", ",").replace("\\n", "\n").replace("\\\\", "\\"));
+        if (desc != null) event.setDescription(desc.replace("\\n", "\n").replace("\\\\", "\\"));
+        if (loc != null) event.setLocation(loc.replace("\\,", ",").replace("\\\\", "\\"));
         if (dtstart != null) {
-            try { event.setStartTime(parseIcalDt(dtstart)); } catch (Exception ignored) {}
+            try {
+                boolean allDay = dtstart.contains("VALUE=DATE") || !dtstart.contains("T");
+                event.setAllDay(allDay);
+                event.setStartTime(parseIcalDt(dtstart));
+            } catch (Exception ignored) {}
         }
         if (dtend != null) {
-            try { event.setEndTime(parseIcalDt(dtend)); } catch (Exception ignored) {}
+            try {
+                event.setEndTime(parseIcalDt(dtend));
+            } catch (Exception ignored) {}
         }
         if (rrule != null) event.setRrule(rrule);
         if (status != null) event.setStatus(status);
@@ -467,34 +981,45 @@ public class WebDavController {
         }
     }
 
-    private String extractValue(String data, String key) {
-        Pattern p = Pattern.compile("(?m)^" + key + "(?:;[^:]*)?:(.+?)(\\r?\\n|$)");
-        Matcher m = p.matcher(data);
-        return m.find() ? m.group(1).trim() : null;
-    }
-
     private LocalDateTime parseIcalDt(String value) {
         String v = value.replace("Z", "");
-        if (v.length() >= 15) {
-            return LocalDateTime.parse(v.substring(0, 15),
+        int tIdx = v.indexOf('T');
+        if (tIdx >= 0) {
+            String datePart = v.substring(0, tIdx).replaceAll("[^0-9]", "");
+            String timePart = v.substring(tIdx + 1).replaceAll("[^0-9]", "");
+            if (timePart.length() >= 6) {
+                return LocalDateTime.parse(datePart + "T" + timePart.substring(0, 6),
+                    DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"));
+            }
+            return LocalDateTime.parse(datePart + "T000000",
                 DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"));
         }
-        return LocalDateTime.parse(v, DateTimeFormatter.ofPattern("yyyyMMdd"));
+        java.time.LocalDate ld = java.time.LocalDate.parse(v.replaceAll("[^0-9]", ""),
+            DateTimeFormatter.ofPattern("yyyyMMdd"));
+        return ld.atStartOfDay();
     }
 
     private String rebuildIcal(CalendarEvent event) {
         var sb = new StringBuilder();
-        sb.append("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Scalefish//Calendar//EN\r\n");
+        sb.append("BEGIN:VCALENDAR\r\n");
+        sb.append("VERSION:2.0\r\n");
+        sb.append("PRODID:-//Scalefish//Calendar//EN\r\n");
         sb.append("CALSCALE:GREGORIAN\r\n");
         sb.append("BEGIN:VEVENT\r\n");
-        sb.append("UID:").append(event.getId()).append("@scalefish\r\n");
-        sb.append("DTSTART:").append(event.getStartTime().format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"))).append("\r\n");
-        sb.append("DTEND:").append(event.getEndTime().format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"))).append("\r\n");
-        sb.append("SUMMARY:").append(event.getTitle()).append("\r\n");
+        String eventUid = event.getUid() != null ? event.getUid() : String.valueOf(event.getId());
+        sb.append("UID:").append(eventUid).append("@scalefish\r\n");
+        if (event.isAllDay()) {
+            sb.append("DTSTART;VALUE=DATE:").append(event.getStartTime().format(ICAL_DATE_FMT)).append("\r\n");
+            sb.append("DTEND;VALUE=DATE:").append(event.getEndTime().format(ICAL_DATE_FMT)).append("\r\n");
+        } else {
+            sb.append("DTSTART:").append(event.getStartTime().format(ICAL_DT_FMT)).append("\r\n");
+            sb.append("DTEND:").append(event.getEndTime().format(ICAL_DT_FMT)).append("\r\n");
+        }
+        sb.append("SUMMARY:").append(escapeIcalText(event.getTitle())).append("\r\n");
         if (event.getDescription() != null)
-            sb.append("DESCRIPTION:").append(event.getDescription().replace("\n", "\\n")).append("\r\n");
+            sb.append("DESCRIPTION:").append(escapeIcalText(event.getDescription())).append("\r\n");
         if (event.getLocation() != null)
-            sb.append("LOCATION:").append(event.getLocation()).append("\r\n");
+            sb.append("LOCATION:").append(escapeIcalText(event.getLocation())).append("\r\n");
         if (event.getRrule() != null)
             sb.append("RRULE:").append(event.getRrule()).append("\r\n");
         if (event.getStatus() != null)
@@ -506,25 +1031,40 @@ public class WebDavController {
         if (event.getUrl() != null)
             sb.append("URL:").append(event.getUrl()).append("\r\n");
         sb.append("SEQUENCE:").append(event.getSequence()).append("\r\n");
-        sb.append("DTSTAMP:").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"))).append("\r\n");
-        sb.append("END:VEVENT\r\nEND:VCALENDAR\r\n");
+        sb.append("DTSTAMP:").append(LocalDateTime.now().format(ICAL_DT_FMT)).append("\r\n");
+        sb.append("END:VEVENT\r\n");
+        sb.append("END:VCALENDAR\r\n");
         return sb.toString();
     }
 
+    private String escapeIcalText(String s) {
+        return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+                .replace("\r\n", "\\n").replace("\n", "\\n");
+    }
+
+    // ──────────────────────────────────────────────
+    // vCard parsing / rebuilding
+    // ──────────────────────────────────────────────
+
     private void parseVcardIntoContact(String vcardData, Contact contact) {
-        String fn = extractValue(vcardData.replace("\r\n", "\n"), "FN");
-        String email = extractValue(vcardData.replace("\r\n", "\n"), "EMAIL");
-        String tel = extractValue(vcardData.replace("\r\n", "\n"), "TEL");
-        String org = extractValue(vcardData.replace("\r\n", "\n"), "ORG");
+        String normalized = vcardData.replace("\r\n", "\n");
+        String fn = extractValue(normalized, "FN");
+        String email = extractValue(normalized, "EMAIL");
+        String tel = extractValue(normalized, "TEL");
+        String org = extractValue(normalized, "ORG");
+        String note = extractValue(normalized, "NOTE");
         if (fn != null) contact.setName(fn);
         if (email != null) contact.setEmail(email);
         if (tel != null) contact.setPhone(tel);
         if (org != null) contact.setOrganization(org);
+        if (note != null) contact.setNotes(note.replace("\\n", "\n"));
     }
 
     private String rebuildVcard(Contact contact) {
         var sb = new StringBuilder();
-        sb.append("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:").append(contact.getName()).append("\r\n");
+        sb.append("BEGIN:VCARD\r\n");
+        sb.append("VERSION:3.0\r\n");
+        sb.append("FN:").append(contact.getName()).append("\r\n");
         sb.append("N:").append(contact.getName()).append(";;;\r\n");
         if (contact.getEmail() != null)
             sb.append("EMAIL;TYPE=INTERNET:").append(contact.getEmail()).append("\r\n");
@@ -532,6 +1072,8 @@ public class WebDavController {
             sb.append("TEL:").append(contact.getPhone()).append("\r\n");
         if (contact.getOrganization() != null)
             sb.append("ORG:").append(contact.getOrganization()).append("\r\n");
+        if (contact.getNotes() != null)
+            sb.append("NOTE:").append(contact.getNotes()).append("\r\n");
         sb.append("END:VCARD\r\n");
         return sb.toString();
     }

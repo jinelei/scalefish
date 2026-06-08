@@ -28,6 +28,20 @@ public class SecurityConfig {
 
     @Order(1)
     @Bean
+    public SecurityFilterChain wellKnownFilterChain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/.well-known/**")
+            .cors(cors -> cors.configurationSource(corsSource()))
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .anyRequest().permitAll()
+            );
+        return http.build();
+    }
+
+    @Order(2)
+    @Bean
     public SecurityFilterChain webdavFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher("/webdav/**")
@@ -42,7 +56,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Order(2)
+    @Order(3)
     @Bean
     public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
@@ -61,7 +75,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Order(3)
+    @Order(4)
     @Bean
     public SecurityFilterChain defaultFilterChain(HttpSecurity http) throws Exception {
         http
