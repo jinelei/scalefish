@@ -4,6 +4,8 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +14,8 @@ import java.util.Date;
 
 @Component
 public class JwtTokenProvider {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtTokenProvider.class);
 
     private final SecretKey accessKey;
     private final SecretKey refreshKey;
@@ -27,27 +31,32 @@ public class JwtTokenProvider {
         this.refreshKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(refreshSecret));
         this.accessExpiration = accessExpiration;
         this.refreshExpiration = refreshExpiration;
+        log.info("JwtTokenProvider initialized: accessExpiration={}ms, refreshExpiration={}ms", accessExpiration, refreshExpiration);
     }
 
     public String generateAccessToken(Long userId, String username) {
         Date now = new Date();
-        return Jwts.builder()
+        String token = Jwts.builder()
                 .subject(userId.toString())
                 .claim("username", username)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + accessExpiration))
                 .signWith(accessKey)
                 .compact();
+        log.debug("Access token generated for userId={}", userId);
+        return token;
     }
 
     public String generateRefreshToken(Long userId) {
         Date now = new Date();
-        return Jwts.builder()
+        String token = Jwts.builder()
                 .subject(userId.toString())
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + refreshExpiration))
                 .signWith(refreshKey)
                 .compact();
+        log.debug("Refresh token generated for userId={}", userId);
+        return token;
     }
 
     public Long getUserIdFromAccessToken(String token) {
@@ -63,6 +72,7 @@ public class JwtTokenProvider {
             parseAccessClaims(token);
             return true;
         } catch (Exception e) {
+            log.debug("Access token validation failed: {}", e.getMessage());
             return false;
         }
     }
@@ -72,12 +82,17 @@ public class JwtTokenProvider {
             parseRefreshClaims(token);
             return true;
         } catch (Exception e) {
+            log.debug("Refresh token validation failed: {}", e.getMessage());
             return false;
         }
     }
 
     public long getAccessExpiration() {
         return accessExpiration;
+    }
+
+    public long getRefreshExpiration() {
+        return refreshExpiration;
     }
 
     private Claims parseAccessClaims(String token) {

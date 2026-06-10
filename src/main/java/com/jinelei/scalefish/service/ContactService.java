@@ -9,12 +9,16 @@ import com.jinelei.scalefish.exception.ErrorCode;
 import com.jinelei.scalefish.exception.ResourceNotFoundException;
 import com.jinelei.scalefish.repository.AddressBookRepository;
 import com.jinelei.scalefish.repository.ContactRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 @Service
 public class ContactService {
+
+    private static final Logger log = LoggerFactory.getLogger(ContactService.class);
 
     private final ContactRepository contactRepository;
     private final AddressBookRepository addressBookRepository;
@@ -29,6 +33,7 @@ public class ContactService {
     }
 
     public List<ContactResponse> listByAddressBook(User user, Long addressBookId) {
+        log.debug("List contacts for addressBook: {}, userId={}", addressBookId, user.getId());
         addressBookService.getEntity(user, addressBookId);
         return contactRepository.findByAddressBookIdOrderByNameAsc(addressBookId).stream()
             .map(ContactResponse::from)
@@ -36,6 +41,7 @@ public class ContactService {
     }
 
     public ContactResponse create(User user, Long addressBookId, ContactRequest request) {
+        log.info("Create contact: name={}, addressBookId={}, userId={}", request.name(), addressBookId, user.getId());
         var ab = addressBookService.getEntity(user, addressBookId);
         var contact = new Contact();
         contact.setName(request.name());
@@ -46,13 +52,16 @@ public class ContactService {
         contact.setAddressBook(ab);
         contact.setVcardData(buildVcard(contact));
         contactRepository.save(contact);
+        log.info("Contact created: id={}, name={}", contact.getId(), contact.getName());
         return ContactResponse.from(contact);
     }
 
     public ContactResponse update(User user, Long contactId, ContactRequest request) {
+        log.info("Update contact: id={}, userId={}", contactId, user.getId());
         var contact = contactRepository.findById(contactId)
             .orElseThrow(() -> new ResourceNotFoundException("Contact", contactId));
         if (!contact.getAddressBook().getUser().getId().equals(user.getId())) {
+            log.warn("Contact update forbidden: id={}, userId={}", contactId, user.getId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "Contact does not belong to the current user");
         }
         contact.setName(request.name());
@@ -62,16 +71,20 @@ public class ContactService {
         contact.setNotes(request.notes());
         contact.setVcardData(buildVcard(contact));
         contactRepository.save(contact);
+        log.info("Contact updated: id={}", contact.getId());
         return ContactResponse.from(contact);
     }
 
     public void delete(User user, Long contactId) {
+        log.info("Delete contact: id={}, userId={}", contactId, user.getId());
         var contact = contactRepository.findById(contactId)
             .orElseThrow(() -> new ResourceNotFoundException("Contact", contactId));
         if (!contact.getAddressBook().getUser().getId().equals(user.getId())) {
+            log.warn("Contact delete forbidden: id={}, userId={}", contactId, user.getId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "Contact does not belong to the current user");
         }
         contactRepository.delete(contact);
+        log.info("Contact deleted: id={}", contactId);
     }
 
     private String buildVcard(Contact contact) {
@@ -97,9 +110,11 @@ public class ContactService {
     }
 
     public Contact getEntity(User user, Long contactId) {
+        log.debug("Get contact entity: id={}, userId={}", contactId, user.getId());
         var contact = contactRepository.findById(contactId)
             .orElseThrow(() -> new ResourceNotFoundException("Contact", contactId));
         if (!contact.getAddressBook().getUser().getId().equals(user.getId())) {
+            log.warn("Contact getEntity forbidden: id={}, userId={}", contactId, user.getId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "Contact does not belong to the current user");
         }
         return contact;

@@ -7,6 +7,8 @@ import com.jinelei.scalefish.exception.BusinessException;
 import com.jinelei.scalefish.exception.ErrorCode;
 import com.jinelei.scalefish.exception.ResourceNotFoundException;
 import com.jinelei.scalefish.repository.ApiTokenRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.security.MessageDigest;
@@ -19,6 +21,8 @@ import java.util.List;
 @Service
 public class ApiTokenService {
 
+    private static final Logger log = LoggerFactory.getLogger(ApiTokenService.class);
+
     private static final String TOKEN_PREFIX = "sf_";
     private static final int TOKEN_BYTES = 32;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -30,6 +34,7 @@ public class ApiTokenService {
     }
 
     public ApiTokenResponse create(Long userId, ApiTokenRequest request) {
+        log.info("Create API token: name={}, userId={}", request.name(), userId);
         byte[] raw = new byte[TOKEN_BYTES];
         RANDOM.nextBytes(raw);
         String rawToken = TOKEN_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
@@ -51,6 +56,7 @@ public class ApiTokenService {
         token.setExpiresAt(expiresAt);
 
         apiTokenRepository.save(token);
+        log.info("API token created: id={}, name={}, prefix={}", token.getId(), token.getName(), token.getTokenPrefix());
 
         return new ApiTokenResponse(
             token.getId(), token.getName(), rawToken,
@@ -60,6 +66,7 @@ public class ApiTokenService {
     }
 
     public List<ApiTokenResponse> list(Long userId) {
+        log.debug("List API tokens for userId={}", userId);
         return apiTokenRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
             .map(t -> new ApiTokenResponse(
                 t.getId(), t.getName(), null,
@@ -70,24 +77,32 @@ public class ApiTokenService {
     }
 
     public void revoke(Long userId, Long tokenId) {
+        log.info("Revoke API token: id={}, userId={}", tokenId, userId);
         var token = apiTokenRepository.findById(tokenId)
             .orElseThrow(() -> new ResourceNotFoundException("Token", tokenId));
         if (!token.getUserId().equals(userId)) {
+            log.warn("API token revoke forbidden: id={}, userId={}", tokenId, userId);
             throw new BusinessException(ErrorCode.FORBIDDEN, "Token does not belong to the current user");
         }
         apiTokenRepository.delete(token);
+        log.info("API token revoked: id={}", tokenId);
     }
 
     public java.util.Optional<ApiToken> authenticate(String rawToken) {
         if (rawToken == null || !rawToken.startsWith(TOKEN_PREFIX)) {
+            log.debug("API token auth failed: invalid prefix");
             return java.util.Optional.empty();
         }
         String hash = sha256(rawToken);
         var opt = apiTokenRepository.findByTokenHash(hash);
-        if (opt.isEmpty()) return java.util.Optional.empty();
+        if (opt.isEmpty()) {
+            log.debug("API token auth failed: token not found");
+            return java.util.Optional.empty();
+        }
 
         var token = opt.get();
         if (token.getExpiresAt() != null && token.getExpiresAt().isBefore(LocalDateTime.now())) {
+            log.debug("API token auth failed: expired token id={}", token.getId());
             apiTokenRepository.delete(token);
             return java.util.Optional.empty();
         }
@@ -95,6 +110,7 @@ public class ApiTokenService {
         token.setLastUsedAt(LocalDateTime.now());
         apiTokenRepository.save(token);
 
+        log.debug("API token auth success: id={}, name={}", token.getId(), token.getName());
         return java.util.Optional.of(token);
     }
 

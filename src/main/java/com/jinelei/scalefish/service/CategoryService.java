@@ -7,6 +7,8 @@ import com.jinelei.scalefish.entity.Category;
 import com.jinelei.scalefish.exception.ResourceNotFoundException;
 import com.jinelei.scalefish.repository.BookmarkRepository;
 import com.jinelei.scalefish.repository.CategoryRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
@@ -18,6 +20,8 @@ import java.util.stream.Collectors;
 @Service
 public class CategoryService {
 
+    private static final Logger log = LoggerFactory.getLogger(CategoryService.class);
+
     private final CategoryRepository categoryRepository;
     private final BookmarkRepository bookmarkRepository;
 
@@ -27,7 +31,9 @@ public class CategoryService {
     }
 
     public List<CategoryResponse> getTree() {
+        log.debug("Get category tree");
         List<Category> all = categoryRepository.findAllByOrderBySortOrder();
+        log.debug("Total categories: {}", all.size());
         Map<Long, List<CategoryResponse>> grouped = all.stream()
             .collect(Collectors.groupingBy(
                 c -> c.getParent() == null ? 0L : c.getParent().getId(),
@@ -59,22 +65,27 @@ public class CategoryService {
     }
 
     public Category getById(Long id) {
+        log.debug("Get category by id: {}", id);
         return categoryRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Category", id));
     }
 
     @Transactional
     public Category create(CategoryRequest req) {
+        log.info("Create category: name={}, parentId={}", req.name(), req.parentId());
         Category cat = new Category(req.name());
         cat.setSortOrder(req.sortOrder() != null ? req.sortOrder() : 0);
         if (req.parentId() != null) {
             cat.setParent(getById(req.parentId()));
         }
-        return categoryRepository.save(cat);
+        Category saved = categoryRepository.save(cat);
+        log.info("Category created: id={}, name={}", saved.getId(), saved.getName());
+        return saved;
     }
 
     @Transactional
     public Category update(Long id, CategoryRequest req) {
+        log.info("Update category: id={}, name={}", id, req.name());
         Category cat = getById(id);
         cat.setName(req.name());
         cat.setSortOrder(req.sortOrder() != null ? req.sortOrder() : cat.getSortOrder());
@@ -83,16 +94,21 @@ public class CategoryService {
         } else {
             cat.setParent(null);
         }
-        return categoryRepository.save(cat);
+        Category saved = categoryRepository.save(cat);
+        log.info("Category updated: id={}", saved.getId());
+        return saved;
     }
 
     @Transactional
     public void delete(Long id) {
+        log.info("Delete category: id={}", id);
         Category cat = getById(id);
         categoryRepository.delete(cat);
+        log.info("Category deleted: id={}", id);
     }
 
     public List<CategoryStatsResponse> getStats() {
+        log.debug("Get category stats");
         List<Object[]> raw = bookmarkRepository.countByCategory();
         Map<Long, Integer> direct = new HashMap<>();
         for (Object[] row : raw) {

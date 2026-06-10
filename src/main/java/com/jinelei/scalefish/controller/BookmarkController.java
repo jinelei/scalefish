@@ -9,6 +9,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,6 +30,8 @@ import java.util.List;
 @RequestMapping("/api/bookmarks")
 public class BookmarkController {
 
+    private static final Logger log = LoggerFactory.getLogger(BookmarkController.class);
+
     private final BookmarkService bookmarkService;
 
     public BookmarkController(BookmarkService bookmarkService) {
@@ -43,12 +47,15 @@ public class BookmarkController {
             @Parameter(description = "是否置顶") @RequestParam(required = false) Boolean pinned,
             @Parameter(description = "页码（从 0 开始）", example = "0") @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int size) {
+        log.debug("GET /api/bookmarks - keyword={}, categoryIds={}, tagIds={}, pinned={}, page={}, size={}",
+            keyword, categoryIds, tagIds, pinned, page, size);
         return GenericResult.success(bookmarkService.search(keyword, categoryIds, tagIds, pinned, page, size));
     }
 
     @Operation(summary = "获取书签详情")
     @GetMapping("/{id}")
     public GenericResult<BookmarkResponse> getById(@Parameter(description = "书签 ID") @PathVariable Long id) {
+        log.debug("GET /api/bookmarks/{}", id);
         return GenericResult.success(bookmarkService.getById(id));
     }
 
@@ -56,6 +63,7 @@ public class BookmarkController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public GenericResult<BookmarkResponse> create(@Valid @RequestBody BookmarkRequest req) {
+        log.info("POST /api/bookmarks - title={}, url={}", req.title(), req.url());
         return GenericResult.created(bookmarkService.create(req));
     }
 
@@ -63,6 +71,7 @@ public class BookmarkController {
     @PutMapping("/{id}")
     public GenericResult<BookmarkResponse> update(@Parameter(description = "书签 ID") @PathVariable Long id,
                                                    @Valid @RequestBody BookmarkRequest req) {
+        log.info("PUT /api/bookmarks/{} - title={}", id, req.title());
         return GenericResult.success(bookmarkService.update(id, req));
     }
 
@@ -70,6 +79,7 @@ public class BookmarkController {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public GenericResult<Void> delete(@Parameter(description = "书签 ID") @PathVariable Long id) {
+        log.info("DELETE /api/bookmarks/{}", id);
         bookmarkService.delete(id);
         return GenericResult.noContent();
     }
@@ -77,12 +87,14 @@ public class BookmarkController {
     @Operation(summary = "切换置顶状态")
     @PatchMapping("/{id}/pin")
     public GenericResult<BookmarkResponse> togglePin(@Parameter(description = "书签 ID") @PathVariable Long id) {
+        log.debug("PATCH /api/bookmarks/{}/pin", id);
         return GenericResult.success(bookmarkService.togglePin(id));
     }
 
     @Operation(summary = "记录点击", description = "书签点击次数 +1")
     @PostMapping("/{id}/click")
     public GenericResult<BookmarkResponse> recordClick(@Parameter(description = "书签 ID") @PathVariable Long id) {
+        log.debug("POST /api/bookmarks/{}/click", id);
         return GenericResult.success(bookmarkService.recordClick(id));
     }
 }

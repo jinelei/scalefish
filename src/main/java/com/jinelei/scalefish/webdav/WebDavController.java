@@ -12,6 +12,8 @@ import com.jinelei.scalefish.repository.ContactRepository;
 import com.jinelei.scalefish.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -38,6 +40,8 @@ import java.util.regex.Pattern;
 @RestController
 @RequestMapping("/webdav")
 public class WebDavController {
+
+    private static final Logger log = LoggerFactory.getLogger(WebDavController.class);
 
     private static final DateTimeFormatter ICAL_DT_FMT =
         DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
@@ -80,14 +84,17 @@ public class WebDavController {
 
     @RequestMapping(value = "/**")
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        String method = request.getMethod();
+        String path = extractPath(request.getRequestURI());
+        log.debug("→ {} {} (remote={}, user-agent={})",
+            method, path, request.getRemoteAddr(), request.getHeader("User-Agent"));
+
         User user = currentUser();
         if (user == null) {
+            log.warn("Authentication failed for {} {}: user not found or not authenticated", method, path);
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
             return;
         }
-
-        String method = request.getMethod();
-        String path = extractPath(request.getRequestURI());
 
         switch (method.toUpperCase()) {
             case "OPTIONS" -> handleOptions(response);
@@ -99,11 +106,23 @@ public class WebDavController {
             case "REPORT" -> handleReport(request, response, path, user);
             case "MKCOL", "MKCALENDAR" -> handleMkcol(request, response, path, user);
             case "PROPPATCH" -> handleProppatch(request, response, path);
-            case "MOVE" -> response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
-            case "COPY" -> response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
+            case "MOVE" -> {
+                log.debug("MOVE not implemented: {}", path);
+                response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
+            }
+            case "COPY" -> {
+                log.debug("COPY not implemented: {}", path);
+                response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
+            }
             case "LOCK" -> handleLock(response, path);
-            case "UNLOCK" -> response.setStatus(HttpServletResponse.SC_NO_CONTENT);
-            default -> response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+            case "UNLOCK" -> {
+                log.debug("UNLOCK {}", path);
+                response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+            }
+            default -> {
+                log.debug("Unsupported method {} for {}", method, path);
+                response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+            }
         }
     }
 
@@ -121,6 +140,7 @@ public class WebDavController {
                                  String path, User user) throws IOException {
         String depth = request.getHeader("Depth");
         if (depth == null) depth = "1";
+        log.debug("PROPFIND {} depth={}", path, depth);
 
         String baseUrl = request.getScheme() + "://" + request.getHeader("Host") + "/webdav";
 
@@ -398,10 +418,12 @@ public class WebDavController {
     private void handleGet(HttpServletRequest request, HttpServletResponse response,
                             String path, User user) throws IOException {
         boolean isHead = "HEAD".equals(request.getMethod());
+        log.debug("{} {} (user={})", isHead ? "HEAD" : "GET", path, user.getUsername());
 
         if (path.endsWith(".ics")) {
             CalendarEvent event = resolveEventFromPath(path, user);
             if (event != null) {
+                log.debug("GET .ics found: eventId={}", event.getId());
                 String ical = event.getIcalData();
                 if (ical == null) ical = rebuildIcal(event);
                 byte[] bytes = ical.getBytes(StandardCharsets.UTF_8);
@@ -415,12 +437,14 @@ public class WebDavController {
                 }
                 return;
             }
+            log.debug("GET .ics not found: {}", path);
         } else if (path.endsWith(".vcf")) {
             Matcher m = Pattern.compile("/contacts/(\\d+)/(\\d+)\\.vcf").matcher(path);
             if (m.find()) {
                 Long contactId = Long.parseLong(m.group(2));
                 var opt = contactRepository.findById(contactId);
                 if (opt.isPresent() && opt.get().getAddressBook().getUser().getId().equals(user.getId())) {
+                    log.debug("GET .vcf found: contactId={}", contactId);
                     String vcard = opt.get().getVcardData();
                     if (vcard == null) vcard = rebuildVcard(opt.get());
                     byte[] bytes = vcard.getBytes(StandardCharsets.UTF_8);
@@ -434,8 +458,10 @@ public class WebDavController {
                     }
                     return;
                 }
+                log.debug("GET .vcf not found or access denied: contactId={}", contactId);
             }
         }
+        log.debug("GET resource not found: {}", path);
         response.sendError(HttpServletResponse.SC_NOT_FOUND);
     }
 
@@ -447,6 +473,8 @@ public class WebDavController {
                             String path, User user) throws IOException {
         String body = readBody(request.getInputStream());
         String ifNoneMatch = request.getHeader("If-None-Match");
+        log.debug("PUT {} bodySize={} If-None-Match={} (user={})",
+            path, body.length(), ifNoneMatch, user.getUsername());
 
         if (path.endsWith(".ics")) {
             Matcher m = Pattern.compile("/calendars/(\\d+)/([^/]+)\\.ics").matcher(path);
@@ -455,11 +483,13 @@ public class WebDavController {
                 String filename = m.group(2);
                 var calOpt = calendarRepository.findById(calId);
                 if (calOpt.isEmpty() || !calOpt.get().getUser().getId().equals(user.getId())) {
+                    log.debug("PUT calendar not found or forbidden: calId={}", calId);
                     response.sendError(HttpServletResponse.SC_FORBIDDEN);
                     return;
                 }
                 var opt = findEventByFilename(calId, filename);
                 if (opt.isPresent() && "*".equals(ifNoneMatch)) {
+                    log.debug("PUT precondition failed (If-None-Match: *): event already exists");
                     response.setStatus(HttpServletResponse.SC_PRECONDITION_FAILED);
                     return;
                 }
@@ -468,6 +498,7 @@ public class WebDavController {
                     event.setIcalData(body);
                     parseIcalIntoEvent(body, event);
                     calendarEventRepository.save(event);
+                    log.debug("PUT updated eventId={}", event.getId());
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
                     response.setHeader("ETag", "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"");
                 } else {
@@ -480,6 +511,7 @@ public class WebDavController {
                     }
                     if (event.getTitle() == null) event.setTitle("Event");
                     calendarEventRepository.save(event);
+                    log.debug("PUT created eventId={} uid={}", event.getId(), event.getUid());
                     response.setStatus(HttpServletResponse.SC_CREATED);
                     response.setHeader("ETag", "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"");
                 }
@@ -495,12 +527,15 @@ public class WebDavController {
                     contact.setVcardData(body);
                     parseVcardIntoContact(body, contact);
                     contactRepository.save(contact);
+                    log.debug("PUT updated contactId={}", contactId);
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
                     response.setHeader("ETag", "\"" + contact.getId() + "-" + contact.getUpdatedAt().format(ICAL_DT_FMT) + "\"");
                     return;
                 }
+                log.debug("PUT contact not found: contactId={}", contactId);
             }
         }
+        log.debug("PUT resource not found: {}", path);
         response.sendError(HttpServletResponse.SC_NOT_FOUND);
     }
 
@@ -509,6 +544,7 @@ public class WebDavController {
     // ──────────────────────────────────────────────
 
     private void handleDelete(HttpServletResponse response, String path, User user) throws IOException {
+        log.debug("DELETE {} (user={})", path, user.getUsername());
         if (path.endsWith(".ics")) {
             Matcher m = Pattern.compile("/calendars/(\\d+)/([^/]+)\\.ics").matcher(path);
             if (m.find()) {
@@ -517,6 +553,7 @@ public class WebDavController {
                 var opt = findEventByFilename(calId, filename);
                 if (opt.isPresent() && opt.get().getCalendar().getUser().getId().equals(user.getId())) {
                     calendarEventRepository.delete(opt.get());
+                    log.debug("DELETE ics success: eventId={}", opt.get().getId());
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
                     return;
                 }
@@ -528,11 +565,13 @@ public class WebDavController {
                 var opt = contactRepository.findById(contactId);
                 if (opt.isPresent() && opt.get().getAddressBook().getUser().getId().equals(user.getId())) {
                     contactRepository.delete(opt.get());
+                    log.debug("DELETE vcf success: contactId={}", contactId);
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT);
                     return;
                 }
             }
         }
+        log.debug("DELETE resource not found: {}", path);
         response.sendError(HttpServletResponse.SC_NOT_FOUND);
     }
 
@@ -544,24 +583,30 @@ public class WebDavController {
                                String path, User user) throws IOException {
         String body = readBody(request.getInputStream());
         String baseUrl = request.getScheme() + "://" + request.getHeader("Host") + "/webdav";
+        log.debug("REPORT {} bodySize={} (user={})", path, body.length(), user.getUsername());
 
         if (body.contains("addressbook-multiget")) {
+            log.debug("REPORT type=addressbook-multiget");
             handleAddressbookMultiget(request, response, path, user, baseUrl, body);
             return;
         }
         if (body.contains("addressbook-query")) {
+            log.debug("REPORT type=addressbook-query");
             handleAddressbookQuery(request, response, path, user, baseUrl, body);
             return;
         }
         if (body.contains("calendar-query") || body.contains("calendar-multiget")) {
+            log.debug("REPORT type={}", body.contains("calendar-multiget") ? "calendar-multiget" : "calendar-query");
             handleCalendarQuery(request, response, path, user, baseUrl, body);
             return;
         }
         if (body.contains("principal-property-search") || body.contains("principal-search-property-set")) {
+            log.debug("REPORT type=principal-property-search");
             handlePrincipalReport(response);
             return;
         }
 
+        log.debug("REPORT type=unknown, not implemented");
         response.sendError(HttpServletResponse.SC_NOT_IMPLEMENTED);
     }
 
@@ -572,6 +617,7 @@ public class WebDavController {
 
         String calIdStr = extractPathSegment(path, "/calendars/");
         if (calIdStr == null) {
+            log.debug("REPORT calendar-query: no calendar id in path: {}", path);
             response.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
@@ -581,6 +627,7 @@ public class WebDavController {
         try {
             calId = Long.parseLong(calIdStr);
         } catch (NumberFormatException e) {
+            log.debug("REPORT calendar-query: invalid calendar id: {}", calIdStr);
             response.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
@@ -592,10 +639,13 @@ public class WebDavController {
         if (timeStart != null || timeEnd != null) {
             LocalDateTime start = timeStart != null ? parseIcalDt(timeStart) : LocalDateTime.MIN;
             LocalDateTime end = timeEnd != null ? parseIcalDt(timeEnd) : LocalDateTime.MAX;
+            log.debug("REPORT calendar-query calId={} timeRange=[{}, {}]", calId, start, end);
             events = calendarEventRepository.findByCalendarIdAndStartTimeBetweenOrderByStartTimeAsc(calId, start, end);
         } else {
+            log.debug("REPORT calendar-query calId={} (no time filter)", calId);
             events = calendarEventRepository.findByCalendarIdOrderByStartTimeAsc(calId);
         }
+        log.debug("REPORT calendar-query: found {} events", events.size());
 
         boolean wantData = body.contains("calendar-data");
         boolean wantEtag = body.contains("getetag");
@@ -631,6 +681,7 @@ public class WebDavController {
                                             String path, User user, String baseUrl, String body) throws IOException {
         boolean wantData = body.contains("address-data");
         boolean wantEtag = body.contains("getetag");
+        log.debug("REPORT addressbook-multiget path={} wantData={} wantEtag={}", path, wantData, wantEtag);
 
         Pattern hrefPattern = Pattern.compile("<D:href>(.*?)</D:href>");
         Matcher m = hrefPattern.matcher(body);
@@ -671,6 +722,7 @@ public class WebDavController {
                                          String path, User user, String baseUrl, String body) throws IOException {
         String abIdStr = extractPathSegment(path, "/contacts/");
         if (abIdStr == null) {
+            log.debug("REPORT addressbook-query: no addressbook id in path: {}", path);
             response.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
@@ -680,12 +732,14 @@ public class WebDavController {
         try {
             abId = Long.parseLong(abIdStr);
         } catch (NumberFormatException e) {
+            log.debug("REPORT addressbook-query: invalid addressbook id: {}", abIdStr);
             response.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
 
         boolean wantData = body.contains("address-data");
         boolean wantEtag = body.contains("getetag");
+        log.debug("REPORT addressbook-query abId={} wantData={} wantEtag={}", abId, wantData, wantEtag);
 
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -733,6 +787,7 @@ public class WebDavController {
     private void handleMkcol(HttpServletRequest request, HttpServletResponse response,
                               String path, User user) throws IOException {
         String body = readBody(request.getInputStream());
+        log.debug("MKCOL/MKCALENDAR {} bodySize={} (user={})", path, body.length(), user.getUsername());
 
         if (path.startsWith("/calendars/")) {
             String name = extractCalendarName(body);
@@ -743,16 +798,20 @@ public class WebDavController {
             if (!name.isEmpty()) {
                 String color = extractCalendarColor(body);
                 String desc = extractCalendarDesc(body);
+                log.debug("MKCOL creating calendar: name={}, color={}", name, color);
                 var cal = new CalendarEntity();
                 cal.setName(name);
                 cal.setDescription(desc != null ? desc : name);
                 cal.setDisplayColor(color != null ? color : "#1C6DD0");
                 cal.setUser(user);
                 calendarRepository.save(cal);
+                log.debug("MKCOL calendar created: id={}", cal.getId());
                 response.setStatus(HttpServletResponse.SC_CREATED);
                 return;
             }
+            log.debug("MKCOL empty calendar name");
         }
+        log.debug("MKCOL not allowed for path: {}", path);
         response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
     }
 
@@ -763,6 +822,7 @@ public class WebDavController {
     private void handleProppatch(HttpServletRequest request, HttpServletResponse response,
                                   String path) throws IOException {
         String body = readBody(request.getInputStream());
+        log.debug("PROPPATCH {} bodySize={}", path, body.length());
 
         boolean hasDisplayName = body.contains("displayname");
         boolean hasCalendarColor = body.contains("calendar-color");
@@ -814,6 +874,7 @@ public class WebDavController {
     // ──────────────────────────────────────────────
 
     private void handleLock(HttpServletResponse response, String path) throws IOException {
+        log.debug("LOCK {}", path);
         String token = "opaquelocktoken:sf-" + System.currentTimeMillis();
         String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
             + "<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery><D:activelock>"

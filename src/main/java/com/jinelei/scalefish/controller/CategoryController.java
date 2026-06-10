@@ -9,6 +9,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,6 +28,8 @@ import java.util.List;
 @RequestMapping("/api/categories")
 public class CategoryController {
 
+    private static final Logger log = LoggerFactory.getLogger(CategoryController.class);
+
     private final CategoryService categoryService;
 
     public CategoryController(CategoryService categoryService) {
@@ -35,12 +39,14 @@ public class CategoryController {
     @Operation(summary = "获取分类树", description = "返回树形结构的全部分类")
     @GetMapping
     public GenericResult<List<CategoryResponse>> getTree() {
+        log.debug("GET /api/categories");
         return GenericResult.success(categoryService.getTree());
     }
 
     @Operation(summary = "获取分类书签统计", description = "返回每个分类及其子分类的书签数量")
     @GetMapping("/stats")
     public GenericResult<List<com.jinelei.scalefish.dto.CategoryStatsResponse>> getStats() {
+        log.debug("GET /api/categories/stats");
         return GenericResult.success(categoryService.getStats());
     }
 
@@ -48,6 +54,7 @@ public class CategoryController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public GenericResult<Category> create(@Valid @RequestBody CategoryRequest req) {
+        log.info("POST /api/categories - name={}, parentId={}", req.name(), req.parentId());
         return GenericResult.created(categoryService.create(req));
     }
 
@@ -55,6 +62,7 @@ public class CategoryController {
     @PutMapping("/{id}")
     public GenericResult<Category> update(@Parameter(description = "分类 ID") @PathVariable Long id,
                                            @Valid @RequestBody CategoryRequest req) {
+        log.info("PUT /api/categories/{} - name={}", id, req.name());
         return GenericResult.success(categoryService.update(id, req));
     }
 
@@ -62,6 +70,7 @@ public class CategoryController {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public GenericResult<Void> delete(@Parameter(description = "分类 ID") @PathVariable Long id) {
+        log.info("DELETE /api/categories/{}", id);
         categoryService.delete(id);
         return GenericResult.noContent();
     }

@@ -4,6 +4,8 @@ import com.jinelei.scalefish.dto.CalendarResponse;
 import com.jinelei.scalefish.dto.GenericResult;
 import com.jinelei.scalefish.entity.User;
 import com.jinelei.scalefish.service.CalendarService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,6 +24,8 @@ import java.util.List;
 @RequestMapping("/api/calendars")
 public class CalendarController {
 
+    private static final Logger log = LoggerFactory.getLogger(CalendarController.class);
+
     private final CalendarService calendarService;
 
     public CalendarController(CalendarService calendarService) {
@@ -30,6 +34,7 @@ public class CalendarController {
 
     @GetMapping
     public GenericResult<List<CalendarResponse>> list(@AuthenticationPrincipal User user) {
+        log.debug("GET /api/calendars - userId={}", user.getId());
         return GenericResult.success(calendarService.list(user));
     }
 
@@ -39,6 +44,7 @@ public class CalendarController {
                                                    @RequestParam String name,
                                                    @RequestParam(required = false) String description,
                                                    @RequestParam(required = false) String displayColor) {
+        log.info("POST /api/calendars - name={}, userId={}", name, user.getId());
         return GenericResult.success(calendarService.create(user, name, description, displayColor));
     }
 
@@ -48,12 +54,14 @@ public class CalendarController {
                                                    @RequestParam(required = false) String name,
                                                    @RequestParam(required = false) String description,
                                                    @RequestParam(required = false) String displayColor) {
+        log.info("PUT /api/calendars/{} - userId={}", id, user.getId());
         return GenericResult.success(calendarService.update(user, id, name, description, displayColor));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal User user, @PathVariable Long id) {
+        log.info("DELETE /api/calendars/{} - userId={}", id, user.getId());
         calendarService.delete(user, id);
     }
 }

@@ -9,6 +9,8 @@ import com.jinelei.scalefish.exception.ErrorCode;
 import com.jinelei.scalefish.exception.ResourceNotFoundException;
 import com.jinelei.scalefish.repository.CalendarEventRepository;
 import com.jinelei.scalefish.repository.CalendarRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -16,6 +18,8 @@ import java.util.List;
 
 @Service
 public class CalendarEventService {
+
+    private static final Logger log = LoggerFactory.getLogger(CalendarEventService.class);
 
     private final CalendarEventRepository eventRepository;
     private final CalendarRepository calendarRepository;
@@ -30,6 +34,7 @@ public class CalendarEventService {
     }
 
     public List<CalendarEventResponse> listByCalendar(User user, Long calendarId) {
+        log.debug("List events for calendar: {}, userId={}", calendarId, user.getId());
         calendarService.getEntity(user, calendarId);
         return eventRepository.findByCalendarIdOrderByStartTimeAsc(calendarId).stream()
             .map(CalendarEventResponse::from)
@@ -37,6 +42,7 @@ public class CalendarEventService {
     }
 
     public List<CalendarEventResponse> listByRange(User user, LocalDateTime start, LocalDateTime end) {
+        log.debug("List events by range: userId={}, start={}, end={}", user.getId(), start, end);
         return eventRepository.findByCalendarUserIdAndStartTimeBetweenOrderByStartTimeAsc(user.getId(), start, end)
             .stream()
             .map(CalendarEventResponse::from)
@@ -44,6 +50,7 @@ public class CalendarEventService {
     }
 
     public CalendarEventResponse create(User user, Long calendarId, CalendarEventRequest request) {
+        log.info("Create event: title={}, calendarId={}, userId={}", request.title(), calendarId, user.getId());
         var cal = calendarService.getEntity(user, calendarId);
         var event = new CalendarEvent();
         event.setTitle(request.title());
@@ -61,13 +68,16 @@ public class CalendarEventService {
         event.setCalendar(cal);
         event.setIcalData(buildIcal(event));
         eventRepository.save(event);
+        log.info("Event created: id={}, title={}", event.getId(), event.getTitle());
         return CalendarEventResponse.from(event);
     }
 
     public CalendarEventResponse update(User user, Long eventId, CalendarEventRequest request) {
+        log.info("Update event: id={}, userId={}", eventId, user.getId());
         var event = eventRepository.findById(eventId)
             .orElseThrow(() -> new ResourceNotFoundException("CalendarEvent", eventId));
         if (!event.getCalendar().getUser().getId().equals(user.getId())) {
+            log.warn("Event update forbidden: id={}, userId={}", eventId, user.getId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "Event does not belong to the current user");
         }
         event.setTitle(request.title());
@@ -84,16 +94,20 @@ public class CalendarEventService {
         event.setSequence(event.getSequence() + 1);
         event.setIcalData(buildIcal(event));
         eventRepository.save(event);
+        log.info("Event updated: id={}", event.getId());
         return CalendarEventResponse.from(event);
     }
 
     public void delete(User user, Long eventId) {
+        log.info("Delete event: id={}, userId={}", eventId, user.getId());
         var event = eventRepository.findById(eventId)
             .orElseThrow(() -> new ResourceNotFoundException("CalendarEvent", eventId));
         if (!event.getCalendar().getUser().getId().equals(user.getId())) {
+            log.warn("Event delete forbidden: id={}, userId={}", eventId, user.getId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "Event does not belong to the current user");
         }
         eventRepository.delete(event);
+        log.info("Event deleted: id={}", eventId);
     }
 
     private String buildIcal(CalendarEvent event) {
@@ -148,9 +162,11 @@ public class CalendarEventService {
     }
 
     public CalendarEvent getEntity(User user, Long eventId) {
+        log.debug("Get event entity: id={}, userId={}", eventId, user.getId());
         var event = eventRepository.findById(eventId)
             .orElseThrow(() -> new ResourceNotFoundException("CalendarEvent", eventId));
         if (!event.getCalendar().getUser().getId().equals(user.getId())) {
+            log.warn("Event getEntity forbidden: id={}, userId={}", eventId, user.getId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "Event does not belong to the current user");
         }
         return event;

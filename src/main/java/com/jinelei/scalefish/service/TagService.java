@@ -12,6 +12,8 @@ import com.jinelei.scalefish.repository.TagRepository;
 import com.jinelei.scalefish.specification.BookmarkSpecification;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.Comparator;
@@ -22,6 +24,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class TagService {
+
+    private static final Logger log = LoggerFactory.getLogger(TagService.class);
 
     private final TagRepository tagRepository;
     private final BookmarkRepository bookmarkRepository;
@@ -34,36 +38,46 @@ public class TagService {
     }
 
     public List<TagResponse> getAll() {
+        log.debug("Get all tags");
         return tagRepository.findAll().stream()
             .map(TagResponse::from)
             .toList();
     }
 
     public Tag getById(Long id) {
+        log.debug("Get tag by id: {}", id);
         return tagRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Tag", id));
     }
 
     public Set<Tag> getAllByIds(Set<Long> ids) {
+        log.debug("Get tags by ids: {}", ids);
         return ids.stream().map(this::getById).collect(Collectors.toSet());
     }
 
     @Transactional
     public Tag create(TagRequest req) {
+        log.info("Create tag: name={}", req.name());
         if (tagRepository.existsByName(req.name())) {
+            log.warn("Tag already exists: {}", req.name());
             throw new DuplicateResourceException("Tag", req.name());
         }
-        return tagRepository.save(new Tag(req.name()));
+        Tag saved = tagRepository.save(new Tag(req.name()));
+        log.info("Tag created: id={}, name={}", saved.getId(), saved.getName());
+        return saved;
     }
 
     @Transactional
     public void delete(Long id) {
+        log.info("Delete tag: id={}", id);
         Tag tag = getById(id);
         tagRepository.delete(tag);
+        log.info("Tag deleted: id={}", id);
     }
 
     @Transactional(readOnly = true)
     public List<TagStatsResponse> getTagStats(List<Long> categoryIds, List<Long> tagIds) {
+        log.debug("Get tag stats: categoryIds={}, tagIds={}", categoryIds, tagIds);
         var spec = BookmarkSpecification.withFilters(null, categoryIds, tagIds, null);
         List<Long> bookmarkIds = bookmarkRepository.findAll(spec)
             .stream().map(Bookmark::getId).toList();

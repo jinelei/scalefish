@@ -6,6 +6,8 @@ import com.jinelei.scalefish.dto.GenericResult;
 import com.jinelei.scalefish.entity.User;
 import com.jinelei.scalefish.service.CalendarEventService;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,6 +30,8 @@ import java.util.List;
 @RequestMapping("/api/events")
 public class CalendarEventController {
 
+    private static final Logger log = LoggerFactory.getLogger(CalendarEventController.class);
+
     private final CalendarEventService eventService;
 
     public CalendarEventController(CalendarEventService eventService) {
@@ -40,6 +44,7 @@ public class CalendarEventController {
             @RequestParam(required = false) Long calendarId,
             @RequestParam(required = false) String start,
             @RequestParam(required = false) String end) {
+        log.debug("GET /api/events - userId={}, calendarId={}, start={}, end={}", user.getId(), calendarId, start, end);
         if (calendarId != null) {
             return GenericResult.success(eventService.listByCalendar(user, calendarId));
         }
@@ -70,6 +75,7 @@ public class CalendarEventController {
     public GenericResult<CalendarEventResponse> create(@AuthenticationPrincipal User user,
                                                         @RequestParam Long calendarId,
                                                         @Valid @RequestBody CalendarEventRequest request) {
+        log.info("POST /api/events - title={}, calendarId={}, userId={}", request.title(), calendarId, user.getId());
         return GenericResult.success(eventService.create(user, calendarId, request));
     }
 
@@ -77,12 +83,14 @@ public class CalendarEventController {
     public GenericResult<CalendarEventResponse> update(@AuthenticationPrincipal User user,
                                                         @PathVariable Long id,
                                                         @Valid @RequestBody CalendarEventRequest request) {
+        log.info("PUT /api/events/{} - userId={}", id, user.getId());
         return GenericResult.success(eventService.update(user, id, request));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal User user, @PathVariable Long id) {
+        log.info("DELETE /api/events/{} - userId={}", id, user.getId());
         eventService.delete(user, id);
     }
 }

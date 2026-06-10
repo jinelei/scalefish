@@ -7,6 +7,8 @@ import com.jinelei.scalefish.entity.Bookmark;
 import com.jinelei.scalefish.exception.ResourceNotFoundException;
 import com.jinelei.scalefish.repository.BookmarkRepository;
 import com.jinelei.scalefish.specification.BookmarkSpecification;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -16,6 +18,8 @@ import java.util.List;
 
 @Service
 public class BookmarkService {
+
+    private static final Logger log = LoggerFactory.getLogger(BookmarkService.class);
 
     private final BookmarkRepository bookmarkRepository;
     private final CategoryService categoryService;
@@ -31,6 +35,8 @@ public class BookmarkService {
 
     public PageResponse<BookmarkResponse> search(String keyword, List<Long> categoryIds, List<Long> tagIds,
                                                   Boolean pinned, int page, int size) {
+        log.debug("Search bookmarks: keyword={}, categoryIds={}, tagIds={}, pinned={}, page={}, size={}",
+            keyword, categoryIds, tagIds, pinned, page, size);
         Sort sort = Sort.by(Sort.Direction.DESC, "pinned")
             .and(Sort.by(Sort.Direction.DESC, "updatedAt"));
         PageRequest pageable = PageRequest.of(page, size, sort);
@@ -38,6 +44,7 @@ public class BookmarkService {
             BookmarkSpecification.withFilters(keyword, categoryIds, tagIds, pinned),
             pageable
         );
+        log.debug("Search results: total={}, pages={}", p.getTotalElements(), p.getTotalPages());
         return new PageResponse<>(
             p.getContent().stream().map(BookmarkResponse::from).toList(),
             p.getTotalElements(), p.getTotalPages(), p.getNumber()
@@ -45,6 +52,7 @@ public class BookmarkService {
     }
 
     public BookmarkResponse getById(Long id) {
+        log.debug("Get bookmark by id: {}", id);
         Bookmark b = bookmarkRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Bookmark", id));
         return BookmarkResponse.from(b);
@@ -52,6 +60,7 @@ public class BookmarkService {
 
     @Transactional
     public BookmarkResponse create(BookmarkRequest req) {
+        log.info("Create bookmark: title={}, url={}", req.title(), req.url());
         Bookmark b = new Bookmark();
         b.setTitle(req.title());
         b.setUrl(req.url());
@@ -71,11 +80,14 @@ public class BookmarkService {
         if (req.createdAt() != null && req.updatedAt() == null) {
             b.setUpdatedAt(req.createdAt());
         }
-        return BookmarkResponse.from(bookmarkRepository.save(b));
+        Bookmark saved = bookmarkRepository.save(b);
+        log.info("Bookmark created: id={}, title={}", saved.getId(), saved.getTitle());
+        return BookmarkResponse.from(saved);
     }
 
     @Transactional
     public BookmarkResponse update(Long id, BookmarkRequest req) {
+        log.info("Update bookmark: id={}, title={}", id, req.title());
         Bookmark b = bookmarkRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Bookmark", id));
         b.setTitle(req.title());
@@ -83,27 +95,36 @@ public class BookmarkService {
         b.setDescription(req.description());
         b.setCategory(req.categoryId() != null ? categoryService.getById(req.categoryId()) : null);
         b.setTags(req.tagIds() != null ? tagService.getAllByIds(req.tagIds()) : new java.util.HashSet<>());
-        return BookmarkResponse.from(bookmarkRepository.save(b));
+        Bookmark saved = bookmarkRepository.save(b);
+        log.info("Bookmark updated: id={}", saved.getId());
+        return BookmarkResponse.from(saved);
     }
 
     @Transactional
     public void delete(Long id) {
+        log.info("Delete bookmark: id={}", id);
         bookmarkRepository.deleteById(id);
     }
 
     @Transactional
     public BookmarkResponse togglePin(Long id) {
+        log.debug("Toggle pin bookmark: id={}", id);
         Bookmark b = bookmarkRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Bookmark", id));
         b.setPinned(!b.isPinned());
-        return BookmarkResponse.from(bookmarkRepository.save(b));
+        Bookmark saved = bookmarkRepository.save(b);
+        log.info("Bookmark pin toggled: id={}, pinned={}", saved.getId(), saved.isPinned());
+        return BookmarkResponse.from(saved);
     }
 
     @Transactional
     public BookmarkResponse recordClick(Long id) {
+        log.debug("Record click bookmark: id={}", id);
         Bookmark b = bookmarkRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Bookmark", id));
         b.setClickCount(b.getClickCount() + 1);
-        return BookmarkResponse.from(bookmarkRepository.save(b));
+        Bookmark saved = bookmarkRepository.save(b);
+        log.debug("Bookmark click recorded: id={}, count={}", saved.getId(), saved.getClickCount());
+        return BookmarkResponse.from(saved);
     }
 }

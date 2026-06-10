@@ -2,6 +2,8 @@ package com.jinelei.scalefish.config;
 
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.id.IdentifierGenerator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
 import java.net.NetworkInterface;
@@ -10,6 +12,8 @@ import java.time.Instant;
 import java.util.Enumeration;
 
 public class SnowflakeIdGenerator implements IdentifierGenerator {
+
+    private static final Logger log = LoggerFactory.getLogger(SnowflakeIdGenerator.class);
 
     private static final long EPOCH = Instant.parse("2025-01-01T00:00:00Z").toEpochMilli();
 
@@ -49,6 +53,7 @@ public class SnowflakeIdGenerator implements IdentifierGenerator {
         } catch (Exception e) {
             id = new SecureRandom().nextInt((int) MAX_WORKER_ID + 1);
         }
+        log.info("SnowflakeIdGenerator initialized: workerId={}", id);
         return id;
     }
 
@@ -57,6 +62,7 @@ public class SnowflakeIdGenerator implements IdentifierGenerator {
         long timestamp = System.currentTimeMillis();
 
         if (timestamp < lastTimestamp) {
+            log.warn("Clock moved backwards! Waiting for next millisecond. lastTimestamp={}, timestamp={}", lastTimestamp, timestamp);
             timestamp = waitForNextMillis(lastTimestamp);
         }
 
@@ -71,9 +77,11 @@ public class SnowflakeIdGenerator implements IdentifierGenerator {
 
         lastTimestamp = timestamp;
 
-        return ((timestamp - EPOCH) << TIMESTAMP_SHIFT)
+        long id = ((timestamp - EPOCH) << TIMESTAMP_SHIFT)
             | (workerId << WORKER_ID_SHIFT)
             | sequence;
+        log.trace("Generated snowflake id: {}", id);
+        return id;
     }
 
     private long waitForNextMillis(long lastTimestamp) {

@@ -19,6 +19,11 @@ app:
     name: Administrator
     email: jinelei@163.com
 
+logging:
+  level:
+    com.jinelei.scalefish: DEBUG
+    org.springframework.security: INFO
+
 jwt:
   access-secret: 9fE2b8F3aA1cD4eG5hJ6kL7mN0pQ2rS4tU6vW8xY0zB3cE5fH7iJ9kL1mN3oP
   refresh-secret: aB3cD5eF7gH9iJ1kL3mN5oP7qR9sT1uV3wX5yZ7aB9cD1eF3gH5iJ7kL9mN1oP
