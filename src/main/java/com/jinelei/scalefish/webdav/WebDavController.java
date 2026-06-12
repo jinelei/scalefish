@@ -595,8 +595,13 @@ public class WebDavController {
             handleAddressbookQuery(request, response, path, user, baseUrl, body);
             return;
         }
-        if (body.contains("calendar-query") || body.contains("calendar-multiget")) {
-            log.debug("REPORT type={}", body.contains("calendar-multiget") ? "calendar-multiget" : "calendar-query");
+        if (body.contains("calendar-multiget")) {
+            log.debug("REPORT type=calendar-multiget");
+            handleCalendarMultiget(request, response, path, user, baseUrl, body);
+            return;
+        }
+        if (body.contains("calendar-query")) {
+            log.debug("REPORT type=calendar-query");
             handleCalendarQuery(request, response, path, user, baseUrl, body);
             return;
         }
@@ -660,6 +665,55 @@ public class WebDavController {
             String etag = "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
 
             xml.append("<response><href>").append(escapeXml(url)).append("</href><propstat><prop>");
+            if (wantEtag) {
+                xml.append("<getetag>").append(etag).append("</getetag>");
+            }
+            if (wantData) {
+                String ical = event.getIcalData();
+                if (ical == null) ical = rebuildIcal(event);
+                xml.append("<C:calendar-data>").append(escapeXml(ical)).append("</C:calendar-data>");
+            }
+            xml.append("</prop><status>HTTP/1.1 200 OK</status></propstat></response>");
+        }
+
+        xml.append("</multistatus>");
+        response.setContentType("application/xml; charset=utf-8");
+        response.setStatus(207);
+        response.getWriter().write(xml.toString());
+    }
+
+    private void handleCalendarMultiget(HttpServletRequest request, HttpServletResponse response,
+                                         String path, User user, String baseUrl, String body) throws IOException {
+        log.debug("REPORT calendar-multiget path={}", path);
+
+        boolean wantData = body.contains("calendar-data");
+        boolean wantEtag = body.contains("getetag");
+
+        Pattern hrefPattern = Pattern.compile("<D:href>(.*?)</D:href>");
+        Matcher m = hrefPattern.matcher(body);
+
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        xml.append("<multistatus xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">");
+
+        while (m.find()) {
+            String href = m.group(1).trim();
+            Matcher pathMatcher = Pattern.compile("/calendars/(\\d+)/([^/]+)\\.ics").matcher(href);
+            if (!pathMatcher.find()) {
+                xml.append("<response><href>").append(escapeXml(href)).append("</href><status>HTTP/1.1 404 Not Found</status></response>");
+                continue;
+            }
+            Long calId = Long.parseLong(pathMatcher.group(1));
+            String filename = pathMatcher.group(2);
+            var eventOpt = findEventByFilename(calId, filename);
+            if (eventOpt.isEmpty() || !eventOpt.get().getCalendar().getUser().getId().equals(user.getId())) {
+                xml.append("<response><href>").append(escapeXml(href)).append("</href><status>HTTP/1.1 404 Not Found</status></response>");
+                continue;
+            }
+            var event = eventOpt.get();
+            String etag = "\"" + event.getId() + "-" + event.getUpdatedAt().format(ICAL_DT_FMT) + "\"";
+
+            xml.append("<response><href>").append(escapeXml(href)).append("</href><propstat><prop>");
             if (wantEtag) {
                 xml.append("<getetag>").append(etag).append("</getetag>");
             }
