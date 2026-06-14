@@ -10,6 +10,7 @@ import com.jinelei.scalefish.repository.ApiTokenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -106,9 +107,6 @@ public class ApiTokenService {
             apiTokenRepository.delete(token);
             return java.util.Optional.empty();
         }
-
-        token.setLastUsedAt(LocalDateTime.now());
-        apiTokenRepository.save(token);
 
         log.debug("API token auth success: id={}, name={}", token.getId(), token.getName());
         return java.util.Optional.of(token);

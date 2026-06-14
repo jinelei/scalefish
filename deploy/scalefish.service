@@ -1,0 +1,26 @@
+[Unit]
+Description=Scalefish Backend Service
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=scalefish
+Group=scalefish
+WorkingDirectory=/opt/scalefish
+
+Environment=SPRING_PROFILES_ACTIVE=prod
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+
+ExecStart=${JAVA_HOME}/bin/java -jar /opt/scalefish/scalefish.jar
+
+# Log directory management
+ExecStartPre=/bin/mkdir -p /var/log/scalefish
+ExecStartPre=/bin/chown scalefish:scalefish /var/log/scalefish
+
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

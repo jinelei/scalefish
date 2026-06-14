@@ -68,6 +68,20 @@ public class TagService {
     }
 
     @Transactional
+    public Tag update(Long id, TagRequest req) {
+        log.info("Update tag: id={}, name={}", id, req.name());
+        Tag tag = getById(id);
+        if (!tag.getName().equals(req.name()) && tagRepository.existsByName(req.name())) {
+            log.warn("Tag name already exists: {}", req.name());
+            throw new DuplicateResourceException("Tag", req.name());
+        }
+        tag.setName(req.name());
+        Tag saved = tagRepository.save(tag);
+        log.info("Tag updated: id={}, name={}", saved.getId(), saved.getName());
+        return saved;
+    }
+
+    @Transactional
     public void delete(Long id) {
         log.info("Delete tag: id={}", id);
         Tag tag = getById(id);
