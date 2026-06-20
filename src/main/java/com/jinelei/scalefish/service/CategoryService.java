@@ -102,8 +102,9 @@ public class CategoryService {
     @Transactional
     public void delete(Long id) {
         log.info("Delete category: id={}", id);
-        Category cat = getById(id);
-        categoryRepository.delete(cat);
+        categoryRepository.clearParentFromChildren(id);
+        bookmarkRepository.clearCategoryFromBookmarks(id);
+        categoryRepository.deleteById(id);
         log.info("Category deleted: id={}", id);
     }
 

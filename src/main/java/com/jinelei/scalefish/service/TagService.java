@@ -84,8 +84,8 @@ public class TagService {
     @Transactional
     public void delete(Long id) {
         log.info("Delete tag: id={}", id);
-        Tag tag = getById(id);
-        tagRepository.delete(tag);
+        bookmarkRepository.removeTagFromAllBookmarks(id);
+        tagRepository.deleteById(id);
         log.info("Tag deleted: id={}", id);
     }
 
