@@ -32,36 +32,6 @@ public class SecurityConfig {
 
     @Order(1)
     @Bean
-    public SecurityFilterChain wellKnownFilterChain(HttpSecurity http) throws Exception {
-        http
-            .securityMatcher("/.well-known/**")
-            .cors(cors -> cors.configurationSource(corsSource()))
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .anyRequest().permitAll()
-            );
-        return http.build();
-    }
-
-    @Order(2)
-    @Bean
-    public SecurityFilterChain webdavFilterChain(HttpSecurity http) throws Exception {
-        http
-            .securityMatcher("/webdav/**")
-            .cors(cors -> cors.configurationSource(corsSource()))
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .anyRequest().authenticated()
-            )
-            .httpBasic(httpBasic -> httpBasic.realmName("Scalefish WebDAV"))
-            .headers(headers -> headers.frameOptions(fo -> fo.disable()));
-        return http.build();
-    }
-
-    @Order(3)
-    @Bean
     public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher("/api/**", "/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**")
@@ -84,7 +54,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Order(4)
+    @Order(2)
     @Bean
     public SecurityFilterChain defaultFilterChain(HttpSecurity http) throws Exception {
         http
@@ -112,9 +82,7 @@ public class SecurityConfig {
     public HttpFirewall httpFirewall() {
         StrictHttpFirewall firewall = new StrictHttpFirewall();
         firewall.setAllowedHttpMethods(Set.of(
-            "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS",
-            "PROPFIND", "PROPPATCH", "MKCOL", "MKCALENDAR", "REPORT",
-            "MOVE", "COPY", "LOCK", "UNLOCK"
+            "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"
         ));
         return firewall;
     }
@@ -122,8 +90,7 @@ public class SecurityConfig {
     private CorsConfigurationSource corsSource() {
         var config = new CorsConfiguration();
         config.setAllowedOriginPatterns(List.of("*"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS",
-            "PROPFIND", "PROPPATCH", "MKCOL", "MKCALENDAR", "REPORT", "MOVE", "COPY", "LOCK", "UNLOCK"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
         var source = new UrlBasedCorsConfigurationSource();
