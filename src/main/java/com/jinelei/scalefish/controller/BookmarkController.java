@@ -1,5 +1,6 @@
 package com.jinelei.scalefish.controller;
 
+import com.jinelei.scalefish.dto.BatchBookmarkRequest;
 import com.jinelei.scalefish.dto.BookmarkRequest;
 import com.jinelei.scalefish.dto.BookmarkResponse;
 import com.jinelei.scalefish.dto.GenericResult;
@@ -82,6 +83,14 @@ public class BookmarkController {
         log.info("DELETE /api/bookmarks/{}", id);
         bookmarkService.delete(id);
         return GenericResult.noContent();
+    }
+
+    @Operation(summary = "批量更新书签", description = "批量更改分类、追加/删除标签")
+    @PatchMapping("/batch")
+    public GenericResult<Void> batchUpdate(@Valid @RequestBody BatchBookmarkRequest req) {
+        log.info("PATCH /api/bookmarks/batch - ids={}", req.ids());
+        bookmarkService.batchUpdate(req.ids(), req.categoryId(), req.addTagIds(), req.removeTagIds());
+        return GenericResult.success(null);
     }
 
     @Operation(summary = "切换置顶状态")

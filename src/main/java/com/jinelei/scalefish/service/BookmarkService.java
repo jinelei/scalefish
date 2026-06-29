@@ -14,7 +14,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class BookmarkService {
@@ -104,6 +106,27 @@ public class BookmarkService {
     public void delete(Long id) {
         log.info("Delete bookmark: id={}", id);
         bookmarkRepository.deleteById(id);
+    }
+
+    @Transactional
+    public void batchUpdate(Set<Long> ids, Long categoryId, Set<Long> addTagIds, Set<Long> removeTagIds) {
+        if (ids == null || ids.isEmpty()) return;
+        log.info("Batch update bookmarks: ids={}, categoryId={}, addTags={}, removeTags={}",
+            ids, categoryId, addTagIds, removeTagIds);
+        List<Bookmark> bookmarks = bookmarkRepository.findAllById(ids);
+        for (Bookmark b : bookmarks) {
+            if (categoryId != null) {
+                b.setCategory(categoryService.getById(categoryId));
+            }
+            if (addTagIds != null && !addTagIds.isEmpty()) {
+                b.getTags().addAll(tagService.getAllByIds(addTagIds));
+            }
+            if (removeTagIds != null && !removeTagIds.isEmpty()) {
+                b.getTags().removeAll(tagService.getAllByIds(removeTagIds));
+            }
+        }
+        bookmarkRepository.saveAll(bookmarks);
+        log.info("Batch update completed: {} bookmarks updated", bookmarks.size());
     }
 
     @Transactional
