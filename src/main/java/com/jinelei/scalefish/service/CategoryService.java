@@ -13,8 +13,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -40,28 +42,49 @@ public class CategoryService {
                 Collectors.mapping(this::toResponseWithoutChildren, Collectors.toList())
             ));
         List<CategoryResponse> roots = grouped.getOrDefault(0L, new ArrayList<>());
-        for (CategoryResponse node : flatten(all)) {
-            Long id = node.id();
-            if (grouped.containsKey(id)) {
-                int idx = roots.indexOf(node);
-                if (idx >= 0) {
-                    CategoryResponse enriched = new CategoryResponse(
-                        node.id(), node.name(), node.sortOrder(),
-                        grouped.get(id)
-                    );
-                    roots.set(idx, enriched);
-                }
-            }
+        for (CategoryResponse root : roots) {
+            attachChildren(root, grouped);
         }
         return roots;
     }
 
-    private List<CategoryResponse> flatten(List<Category> all) {
-        return all.stream().map(this::toResponseWithoutChildren).toList();
+    private void attachChildren(CategoryResponse parent, Map<Long, List<CategoryResponse>> grouped) {
+        List<CategoryResponse> children = grouped.get(parent.id());
+        if (children != null) {
+            parent.children().addAll(children);
+            for (CategoryResponse child : children) {
+                attachChildren(child, grouped);
+            }
+        }
     }
 
     private CategoryResponse toResponseWithoutChildren(Category c) {
         return new CategoryResponse(c.getId(), c.getName(), c.getSortOrder(), new ArrayList<>());
+    }
+
+    public Set<Long> getDescendantIds(List<Long> categoryIds) {
+        if (categoryIds == null || categoryIds.isEmpty()) {
+            return new HashSet<>();
+        }
+        List<Category> all = categoryRepository.findAllByOrderBySortOrder();
+        Map<Long, List<Long>> parentToChildren = new HashMap<>();
+        for (Category c : all) {
+            Long parentId = c.getParent() != null ? c.getParent().getId() : 0L;
+            parentToChildren.computeIfAbsent(parentId, k -> new ArrayList<>()).add(c.getId());
+        }
+        Set<Long> result = new HashSet<>(categoryIds);
+        for (Long id : categoryIds) {
+            collectDescendants(id, parentToChildren, result);
+        }
+        return result;
+    }
+
+    private void collectDescendants(Long id, Map<Long, List<Long>> parentToChildren, Set<Long> result) {
+        for (Long childId : parentToChildren.getOrDefault(id, List.of())) {
+            if (result.add(childId)) {
+                collectDescendants(childId, parentToChildren, result);
+            }
+        }
     }
 
     public Category getById(Long id) {

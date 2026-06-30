@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -29,11 +30,14 @@ public class TagService {
 
     private final TagRepository tagRepository;
     private final BookmarkRepository bookmarkRepository;
+    private final CategoryService categoryService;
     private final EntityManager entityManager;
 
-    public TagService(TagRepository tagRepository, BookmarkRepository bookmarkRepository, EntityManager entityManager) {
+    public TagService(TagRepository tagRepository, BookmarkRepository bookmarkRepository,
+                      CategoryService categoryService, EntityManager entityManager) {
         this.tagRepository = tagRepository;
         this.bookmarkRepository = bookmarkRepository;
+        this.categoryService = categoryService;
         this.entityManager = entityManager;
     }
 
@@ -91,8 +95,11 @@ public class TagService {
 
     @Transactional(readOnly = true)
     public List<TagStatsResponse> getTagStats(List<Long> categoryIds, List<Long> tagIds) {
-        log.debug("Get tag stats: categoryIds={}, tagIds={}", categoryIds, tagIds);
-        var spec = BookmarkSpecification.withFilters(null, categoryIds, tagIds, null);
+        List<Long> expandedCategoryIds = categoryIds != null && !categoryIds.isEmpty()
+            ? new ArrayList<>(categoryService.getDescendantIds(categoryIds))
+            : categoryIds;
+        log.debug("Get tag stats: categoryIds={}, tagIds={}", expandedCategoryIds, tagIds);
+        var spec = BookmarkSpecification.withFilters(null, expandedCategoryIds, tagIds, null);
         List<Long> bookmarkIds = bookmarkRepository.findAll(spec)
             .stream().map(Bookmark::getId).toList();
 

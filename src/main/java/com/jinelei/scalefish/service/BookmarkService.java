@@ -14,6 +14,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -37,13 +38,16 @@ public class BookmarkService {
 
     public PageResponse<BookmarkResponse> search(String keyword, List<Long> categoryIds, List<Long> tagIds,
                                                   Boolean pinned, int page, int size) {
+        List<Long> expandedCategoryIds = categoryIds != null && !categoryIds.isEmpty()
+            ? new ArrayList<>(categoryService.getDescendantIds(categoryIds))
+            : categoryIds;
         log.debug("Search bookmarks: keyword={}, categoryIds={}, tagIds={}, pinned={}, page={}, size={}",
-            keyword, categoryIds, tagIds, pinned, page, size);
+            keyword, expandedCategoryIds, tagIds, pinned, page, size);
         Sort sort = Sort.by(Sort.Direction.DESC, "pinned")
             .and(Sort.by(Sort.Direction.DESC, "updatedAt"));
         PageRequest pageable = PageRequest.of(page, size, sort);
         Page<Bookmark> p = bookmarkRepository.findAll(
-            BookmarkSpecification.withFilters(keyword, categoryIds, tagIds, pinned),
+            BookmarkSpecification.withFilters(keyword, expandedCategoryIds, tagIds, pinned),
             pageable
         );
         log.debug("Search results: total={}, pages={}", p.getTotalElements(), p.getTotalPages());
