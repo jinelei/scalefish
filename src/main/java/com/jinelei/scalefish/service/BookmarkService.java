@@ -46,14 +46,25 @@ public class BookmarkService {
         Sort sort = Sort.by(Sort.Direction.DESC, "pinned")
             .and(Sort.by(Sort.Direction.DESC, "updatedAt"));
         PageRequest pageable = PageRequest.of(page, size, sort);
-        Page<Bookmark> p = bookmarkRepository.findAll(
-            BookmarkSpecification.withFilters(keyword, expandedCategoryIds, tagIds, pinned),
-            pageable
-        );
+        var spec = BookmarkSpecification.withFilters(keyword, expandedCategoryIds, tagIds, pinned);
+        Page<Bookmark> p = bookmarkRepository.findAll(spec, pageable);
         log.debug("Search results: total={}, pages={}", p.getTotalElements(), p.getTotalPages());
+
+        Long totalDistinctCategories = null;
+        Long totalDistinctTags = null;
+        if (page == 0) {
+            List<Long> allIds = bookmarkRepository.findAll(spec).stream()
+                .map(Bookmark::getId).toList();
+            totalDistinctCategories = allIds.isEmpty()
+                ? 0L : bookmarkRepository.countDistinctCategoriesByIds(allIds);
+            totalDistinctTags = allIds.isEmpty()
+                ? 0L : bookmarkRepository.countDistinctTagsByIds(allIds);
+        }
+
         return new PageResponse<>(
             p.getContent().stream().map(BookmarkResponse::from).toList(),
-            p.getTotalElements(), p.getTotalPages(), p.getNumber()
+            p.getTotalElements(), p.getTotalPages(), p.getNumber(),
+            totalDistinctCategories, totalDistinctTags
         );
     }
 

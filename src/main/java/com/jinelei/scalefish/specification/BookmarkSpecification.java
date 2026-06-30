@@ -32,8 +32,6 @@ public class BookmarkSpecification {
                 var tagJoin = subRoot.join("tags");
                 subquery.select(subRoot.get("id"));
                 subquery.where(tagJoin.get("id").in(tagIds));
-                subquery.groupBy(subRoot.get("id"));
-                subquery.having(cb.equal(cb.count(subRoot.get("id")), (long) tagIds.size()));
                 predicates.add(root.get("id").in(subquery));
             }
 
